@@ -4,30 +4,47 @@ const bcrypt = require('bcryptjs');
 const userSchema = new mongoose.Schema({
   email: {
     type: String,
-    required: true,
+    required: [true, 'Email is required'],
     unique: true,
     lowercase: true,
-    trim: true
+    trim: true,
+    validate: {
+      validator: function(v) {
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+      },
+      message: 'Please enter a valid email address'
+    }
   },
   password: {
     type: String,
-    required: true,
-    minlength: 6
+    required: [true, 'Password is required'],
+    minlength: [6, 'Password must be at least 6 characters long']
   },
   firstName: {
     type: String,
-    required: true,
-    trim: true
+    required: [true, 'First name is required'],
+    trim: true,
+    minlength: [2, 'First name must be at least 2 characters long'],
+    maxlength: [50, 'First name cannot exceed 50 characters']
   },
   lastName: {
     type: String,
-    required: true,
-    trim: true
+    required: [true, 'Last name is required'],
+    trim: true,
+    minlength: [2, 'Last name must be at least 2 characters long'],
+    maxlength: [50, 'Last name cannot exceed 50 characters']
   },
   phone: {
     type: String,
-    required: true,
-    unique: true
+    required: [true, 'Phone number is required'],
+    unique: true,
+    trim: true,
+    validate: {
+      validator: function(v) {
+        return /^[\+]?[1-9][\d]{0,15}$/.test(v.replace(/\s/g, ''));
+      },
+      message: 'Please enter a valid phone number'
+    }
   },
   firebaseUid: {
     type: String,

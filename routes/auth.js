@@ -72,6 +72,31 @@ router.post('/register', async (req, res) => {
 
   } catch (error) {
     console.error('Registration error:', error);
+    
+    // Handle specific MongoDB errors
+    if (error.code === 11000) {
+      // Duplicate key error
+      const field = Object.keys(error.keyPattern)[0];
+      const message = field === 'email' 
+        ? 'An account with this email already exists' 
+        : field === 'phone'
+        ? 'An account with this phone number already exists'
+        : 'An account with this information already exists';
+      return res.status(400).json({ error: message });
+    }
+    
+    // Handle Mongoose validation errors
+    if (error.name === 'ValidationError') {
+      const messages = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({ error: messages.join(', ') });
+    }
+    
+    // Handle other known errors
+    if (error.name === 'CastError') {
+      return res.status(400).json({ error: 'Invalid data format' });
+    }
+    
+    // Generic server error
     res.status(500).json({ error: 'Registration failed' });
   }
 });
@@ -82,8 +107,20 @@ router.post('/login', authenticateLocal, (req, res) => {
     const { expectedUserType } = req.body;
     const user = req.user;
     
-    // Check if user type matches expected type (if specified)
-    if (expectedUserType && user.userType !== expectedUserType) {
+    // Check if expected user type is provided and valid
+    if (!expectedUserType) {
+      return res.status(400).json({ 
+        error: 'User type must be specified for login' 
+      });
+    }
+    
+    if (!['rider', 'driver'].includes(expectedUserType)) {
+      return res.status(400).json({ 
+        error: 'Invalid user type. Must be either "rider" or "driver"' 
+      });
+    }
+    
+    if (user.userType !== expectedUserType) {
       const userTypeName = user.userType === 'driver' ? 'Driver' : 'Rider';
       const expectedTypeName = expectedUserType === 'driver' ? 'Driver' : 'Rider';
       
@@ -103,7 +140,14 @@ router.post('/login', authenticateLocal, (req, res) => {
     });
   } catch (error) {
     console.error('Login error:', error);
-    res.status(500).json({ error: 'Login failed' });
+    
+    // Handle specific errors
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({ error: 'Invalid login data' });
+    }
+    
+    // Generic server error
+    res.status(500).json({ error: 'Authentication error' });
   }
 });
 
