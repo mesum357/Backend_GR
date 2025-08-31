@@ -79,12 +79,27 @@ router.post('/register', async (req, res) => {
 // Login user
 router.post('/login', authenticateLocal, (req, res) => {
   try {
-    const token = generateToken(req.user);
+    const { expectedUserType } = req.body;
+    const user = req.user;
+    
+    // Check if user type matches expected type (if specified)
+    if (expectedUserType && user.userType !== expectedUserType) {
+      const userTypeName = user.userType === 'driver' ? 'Driver' : 'Rider';
+      const expectedTypeName = expectedUserType === 'driver' ? 'Driver' : 'Rider';
+      
+      return res.status(400).json({ 
+        error: `This account is registered as a ${userTypeName}. Please use ${expectedTypeName} Login instead.`,
+        userType: user.userType,
+        expectedUserType: expectedUserType
+      });
+    }
+    
+    const token = generateToken(user);
     
     res.json({
       message: 'Login successful',
       token,
-      user: req.user.getPublicProfile()
+      user: user.getPublicProfile()
     });
   } catch (error) {
     console.error('Login error:', error);

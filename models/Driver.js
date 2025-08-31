@@ -62,6 +62,23 @@ const driverSchema = new mongoose.Schema({
   minFare: { type: Number, default: 50 }, // minimum fare in PKR
   maxFare: { type: Number, default: 2000 }, // maximum fare in PKR
 
+  // Driver wallet for managing payments
+  wallet: {
+    balance: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    currency: {
+      type: String,
+      default: 'PKR'
+    },
+    lastTransactionAt: {
+      type: Date,
+      default: null
+    }
+  },
+
   // Bank account information for payments
   bankInfo: {
     accountNumber: { type: String },

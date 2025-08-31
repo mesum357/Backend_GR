@@ -59,6 +59,7 @@ const driverRoutes = require('./routes/drivers');
 const firebaseRoutes = require('./routes/firebase');
 const rideRequestRoutes = require('./routes/ride-requests');
 const firebaseAuthRoutes = require('./routes/firebase-auth');
+const driverWalletRoutes = require('./routes/driverWallet');
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -68,6 +69,7 @@ app.use('/api/drivers', driverRoutes);
 app.use('/api/firebase', firebaseRoutes);
 app.use('/api/ride-requests', rideRequestRoutes);
 app.use('/api/firebase-auth', firebaseAuthRoutes);
+app.use('/api/driver/wallet', driverWalletRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
