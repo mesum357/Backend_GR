@@ -3,6 +3,8 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const passport = require('passport');
 const session = require('express-session');
+const http = require('http');
+const socketIo = require('socket.io');
 require('dotenv').config();
 
 // Import passport configuration
@@ -98,6 +100,201 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 8080;
 
+// Create HTTP server
+const server = http.createServer(app);
+
+// Initialize Socket.IO
+const io = socketIo(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
+});
+
+// Store active connections
+const activeConnections = new Map(); // userId -> socketId
+const driverConnections = new Map(); // driverId -> socketId
+
+// Socket.IO connection handling
+io.on('connection', (socket) => {
+  console.log(`🔌 New connection: ${socket.id}`);
+
+  // Handle user authentication
+  socket.on('authenticate', (data) => {
+    const { userId, userType } = data;
+    activeConnections.set(userId, socket.id);
+    
+    if (userType === 'driver') {
+      driverConnections.set(userId, socket.id);
+      console.log(`🚗 Driver ${userId} connected`);
+    } else {
+      console.log(`👤 Rider ${userId} connected`);
+    }
+  });
+
+  // Handle driver response to ride request
+  socket.on('driver_response', async (data) => {
+    try {
+      const { rideRequestId, driverId, action, counterOffer } = data;
+      
+      // Find the ride request
+      const RideRequest = require('./models/RideRequest');
+      const rideRequest = await RideRequest.findById(rideRequestId);
+      
+      if (!rideRequest) {
+        socket.emit('error', { message: 'Ride request not found' });
+        return;
+      }
+
+      if (action === 'accept') {
+        // Atomic assignment - only first accept wins
+        if (rideRequest.status === 'pending') {
+          rideRequest.status = 'accepted';
+          rideRequest.acceptedBy = driverId;
+          await rideRequest.save();
+
+          // Notify rider
+          const riderSocketId = activeConnections.get(rideRequest.rider.toString());
+          if (riderSocketId) {
+            io.to(riderSocketId).emit('driver_assigned', {
+              rideRequestId,
+              driverId,
+              message: 'Driver has been assigned to your ride'
+            });
+          }
+
+          // Notify all other drivers that request is no longer available
+          rideRequest.availableDrivers.forEach(availableDriver => {
+            if (availableDriver.driver.toString() !== driverId) {
+              const driverSocketId = driverConnections.get(availableDriver.driver.toString());
+              if (driverSocketId) {
+                io.to(driverSocketId).emit('ride_request_cancelled', {
+                  rideRequestId,
+                  message: 'This ride request has been accepted by another driver'
+                });
+              }
+            }
+          });
+
+          socket.emit('response_success', { message: 'Ride request accepted successfully' });
+        } else {
+          socket.emit('error', { message: 'Ride request is no longer available' });
+        }
+      } else if (action === 'negotiate') {
+        // Handle counter offer
+        rideRequest.availableDrivers.forEach(availableDriver => {
+          if (availableDriver.driver.toString() === driverId) {
+            availableDriver.counterOffer = counterOffer;
+            availableDriver.status = 'counter_offered';
+            availableDriver.respondedAt = new Date();
+          }
+        });
+        
+        await rideRequest.save();
+
+        // Notify rider about counter offer
+        const riderSocketId = activeConnections.get(rideRequest.rider.toString());
+        if (riderSocketId) {
+          io.to(riderSocketId).emit('ride_counter_offer', {
+            rideRequestId,
+            driverId,
+            counterOffer,
+            message: 'Driver has made a counter offer'
+          });
+        }
+
+        socket.emit('response_success', { message: 'Counter offer sent successfully' });
+      }
+    } catch (error) {
+      console.error('Error handling driver response:', error);
+      socket.emit('error', { message: 'Failed to process response' });
+    }
+  });
+
+  // Handle rider accepting counter offer
+  socket.on('accept_counter_offer', async (data) => {
+    try {
+      const { rideRequestId, driverId } = data;
+      
+      const RideRequest = require('./models/RideRequest');
+      const rideRequest = await RideRequest.findById(rideRequestId);
+      
+      if (!rideRequest) {
+        socket.emit('error', { message: 'Ride request not found' });
+        return;
+      }
+
+      // Find the counter offer
+      const counterOfferDriver = rideRequest.availableDrivers.find(
+        driver => driver.driver.toString() === driverId && driver.status === 'counter_offered'
+      );
+
+      if (!counterOfferDriver) {
+        socket.emit('error', { message: 'Counter offer not found' });
+        return;
+      }
+
+      // Accept the counter offer
+      rideRequest.status = 'accepted';
+      rideRequest.acceptedBy = driverId;
+      rideRequest.requestedPrice = counterOfferDriver.counterOffer;
+      await rideRequest.save();
+
+      // Notify driver
+      const driverSocketId = driverConnections.get(driverId);
+      if (driverSocketId) {
+        io.to(driverSocketId).emit('counter_offer_accepted', {
+          rideRequestId,
+          message: 'Your counter offer has been accepted'
+        });
+      }
+
+      // Notify rider
+      socket.emit('counter_offer_accepted', {
+        rideRequestId,
+        message: 'Counter offer accepted successfully'
+      });
+
+      // Notify other drivers
+      rideRequest.availableDrivers.forEach(availableDriver => {
+        if (availableDriver.driver.toString() !== driverId) {
+          const driverSocketId = driverConnections.get(availableDriver.driver.toString());
+          if (driverSocketId) {
+            io.to(driverSocketId).emit('ride_request_cancelled', {
+              rideRequestId,
+              message: 'This ride request has been accepted by another driver'
+            });
+          }
+        }
+      });
+
+    } catch (error) {
+      console.error('Error accepting counter offer:', error);
+      socket.emit('error', { message: 'Failed to accept counter offer' });
+    }
+  });
+
+  // Handle disconnection
+  socket.on('disconnect', () => {
+    console.log(`🔌 Disconnected: ${socket.id}`);
+    
+    // Remove from active connections
+    for (const [userId, socketId] of activeConnections.entries()) {
+      if (socketId === socket.id) {
+        activeConnections.delete(userId);
+        driverConnections.delete(userId);
+        console.log(`👤 User ${userId} disconnected`);
+        break;
+      }
+    }
+  });
+});
+
+// Make io and connection maps available to routes
+app.set('io', io);
+app.set('activeConnections', activeConnections);
+app.set('driverConnections', driverConnections);
+
 // Get network IP address
 const os = require('os');
 function getNetworkIP() {
@@ -114,7 +311,7 @@ function getNetworkIP() {
 
 const networkIP = getNetworkIP();
 
-app.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Server accessible at:`);
   console.log(`  - Local: http://localhost:${PORT}`);

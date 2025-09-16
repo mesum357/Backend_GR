@@ -82,6 +82,186 @@ router.post('/create', authenticateJWT, async (req, res) => {
   }
 });
 
+// New endpoint for ride request with 1.2km radius search
+router.post('/request-ride', authenticateJWT, async (req, res) => {
+  try {
+    const {
+      pickup,
+      destination,
+      offeredFare,
+      radiusMeters = 1200, // Default 1.2km radius
+      paymentMethod = 'cash',
+      vehicleType = 'any',
+      notes = ''
+    } = req.body;
+
+    // Validate required fields
+    if (!pickup || !destination || !offeredFare) {
+      return res.status(400).json({ 
+        error: 'Pickup location, destination, and offered fare are required' 
+      });
+    }
+
+    // Check if user is a rider
+    if (req.user.userType !== 'rider') {
+      return res.status(403).json({ error: 'Only riders can create ride requests' });
+    }
+
+    // Calculate distance and duration
+    const distance = calculateHaversineDistance(
+      pickup.latitude,
+      pickup.longitude,
+      destination.latitude,
+      destination.longitude
+    );
+
+    const estimatedDuration = Math.round(distance * 2); // 2 minutes per km
+
+    // Create ride request
+    const rideRequest = new RideRequest({
+      rider: req.user._id,
+      pickupLocation: {
+        latitude: pickup.latitude,
+        longitude: pickup.longitude,
+        address: pickup.address || 'Unknown location'
+      },
+      destination: {
+        latitude: destination.latitude,
+        longitude: destination.longitude,
+        address: destination.address || 'Unknown destination'
+      },
+      distance,
+      estimatedDuration,
+      requestedPrice: offeredFare,
+      suggestedPrice: offeredFare,
+      notes,
+      vehicleType,
+      paymentMethod,
+      requestRadius: radiusMeters / 1000, // Convert meters to km
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes
+      status: 'pending'
+    });
+
+    await rideRequest.save();
+
+    // Find drivers within 1.2km radius using Haversine formula
+    const nearbyDrivers = await findDriversWithinRadius(
+      pickup.latitude,
+      pickup.longitude,
+      radiusMeters / 1000 // Convert to km
+    );
+
+    // Get socket.io instance
+    const io = req.app.get('io');
+
+    // Send ride request to each nearby driver via socket
+    for (const driver of nearbyDrivers) {
+      const driverSocketId = req.app.get('driverConnections')?.get(driver._id.toString());
+      if (driverSocketId) {
+        io.to(driverSocketId).emit('ride_request', {
+          rideRequestId: rideRequest._id,
+          rider: {
+            id: req.user._id,
+            firstName: req.user.firstName,
+            lastName: req.user.lastName,
+            rating: req.user.rating || 0
+          },
+          pickup: rideRequest.pickupLocation,
+          destination: rideRequest.destination,
+          distance: rideRequest.distance,
+          estimatedDuration: rideRequest.estimatedDuration,
+          offeredFare: rideRequest.requestedPrice,
+          vehicleType: rideRequest.vehicleType,
+          paymentMethod: rideRequest.paymentMethod,
+          notes: rideRequest.notes,
+          expiresAt: rideRequest.expiresAt,
+          createdAt: rideRequest.createdAt
+        });
+
+        // Add driver to available drivers list
+        rideRequest.availableDrivers.push({
+          driver: driver._id,
+          distance: calculateHaversineDistance(
+            pickup.latitude,
+            pickup.longitude,
+            driver.currentLocation.coordinates[1],
+            driver.currentLocation.coordinates[0]
+          ),
+          estimatedTime: Math.round(calculateHaversineDistance(
+            pickup.latitude,
+            pickup.longitude,
+            driver.currentLocation.coordinates[1],
+            driver.currentLocation.coordinates[0]
+          ) * 2),
+          viewedAt: new Date()
+        });
+      }
+    }
+
+    await rideRequest.save();
+
+    res.status(201).json({
+      message: 'Ride request sent to nearby drivers',
+      rideRequest: {
+        id: rideRequest._id,
+        status: rideRequest.status,
+        expiresAt: rideRequest.expiresAt,
+        driversNotified: nearbyDrivers.length,
+        distance: rideRequest.distance,
+        estimatedDuration: rideRequest.estimatedDuration,
+        offeredFare: rideRequest.requestedPrice
+      }
+    });
+
+  } catch (error) {
+    console.error('Error creating ride request:', error);
+    res.status(500).json({ error: 'Failed to create ride request' });
+  }
+});
+
+// Helper function to calculate Haversine distance
+function calculateHaversineDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371; // Earth's radius in kilometers
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+// Helper function to find drivers within radius
+async function findDriversWithinRadius(latitude, longitude, radiusKm) {
+  const User = require('../models/User');
+  
+  // Get all online drivers
+  const drivers = await User.find({
+    userType: 'driver',
+    isOnline: true,
+    isAvailable: true
+  });
+
+  // Filter drivers within radius using Haversine formula
+  const nearbyDrivers = drivers.filter(driver => {
+    if (!driver.currentLocation || !driver.currentLocation.coordinates) {
+      return false;
+    }
+    
+    const distance = calculateHaversineDistance(
+      latitude,
+      longitude,
+      driver.currentLocation.coordinates[1], // latitude
+      driver.currentLocation.coordinates[0]  // longitude
+    );
+    
+    return distance <= radiusKm;
+  });
+
+  return nearbyDrivers;
+}
+
 // Get available ride requests for drivers
 router.get('/available', authenticateJWT, async (req, res) => {
   try {
