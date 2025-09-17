@@ -85,6 +85,7 @@ router.post('/create', authenticateJWT, async (req, res) => {
 // New endpoint for ride request with 1.2km radius search
 router.post('/request-ride', authenticateJWT, async (req, res) => {
   try {
+    console.log('🔧 Received request body:', req.body);
     const {
       pickup,
       destination,
@@ -94,6 +95,12 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
       vehicleType = 'any',
       notes = ''
     } = req.body;
+    
+    console.log('🔧 Payment method received:', paymentMethod);
+    
+    // Normalize payment method to lowercase
+    const normalizedPaymentMethod = paymentMethod ? paymentMethod.toLowerCase() : 'cash';
+    console.log('🔧 Normalized payment method:', normalizedPaymentMethod);
 
     // Validate required fields
     if (!pickup || !destination || !offeredFare) {
@@ -136,7 +143,7 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
       suggestedPrice: offeredFare,
       notes,
       vehicleType,
-      paymentMethod,
+      paymentMethod: normalizedPaymentMethod,
       requestRadius: radiusMeters / 1000, // Convert meters to km
       expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes
       status: 'pending'
@@ -262,7 +269,161 @@ async function findDriversWithinRadius(latitude, longitude, radiusKm) {
   return nearbyDrivers;
 }
 
+// Get ride request status
+router.get('/:id/status', authenticateJWT, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const rideRequest = await RideRequest.findById(id);
+    
+    if (!rideRequest) {
+      return res.status(404).json({ error: 'Ride request not found' });
+    }
+    
+    // Check if user is the rider or a driver who can see this request
+    if (rideRequest.rider.toString() !== req.user._id && 
+        !rideRequest.availableDrivers.some(driver => driver.driver.toString() === req.user._id)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    
+    res.json({
+      id: rideRequest._id,
+      status: rideRequest.status,
+      acceptedBy: rideRequest.acceptedBy,
+      requestedPrice: rideRequest.requestedPrice,
+      expiresAt: rideRequest.expiresAt
+    });
+    
+  } catch (error) {
+    console.error('Error fetching ride request status:', error);
+    res.status(500).json({ error: 'Failed to fetch ride request status' });
+  }
+});
+
+// Driver respond to ride request
+router.post('/:id/respond', authenticateJWT, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { action, driverId, counterOffer } = req.body;
+    
+    const rideRequest = await RideRequest.findById(id);
+    
+    if (!rideRequest) {
+      return res.status(404).json({ error: 'Ride request not found' });
+    }
+    
+    // Check if user is a driver
+    if (req.user.userType !== 'driver') {
+      return res.status(403).json({ error: 'Only drivers can respond to ride requests' });
+    }
+    
+    if (action === 'accept') {
+      // Atomic assignment - only first accept wins
+      if (rideRequest.status === 'pending') {
+        rideRequest.status = 'accepted';
+        rideRequest.acceptedBy = driverId;
+        await rideRequest.save();
+        
+        res.json({ message: 'Ride request accepted successfully' });
+      } else {
+        res.status(400).json({ error: 'Ride request is no longer available' });
+      }
+    } else if (action === 'negotiate') {
+      // Handle counter offer
+      rideRequest.availableDrivers.forEach(availableDriver => {
+        if (availableDriver.driver.toString() === driverId) {
+          availableDriver.counterOffer = counterOffer;
+          availableDriver.status = 'counter_offered';
+          availableDriver.respondedAt = new Date();
+        }
+      });
+      
+      await rideRequest.save();
+      res.json({ message: 'Counter offer sent successfully' });
+    } else {
+      res.status(400).json({ error: 'Invalid action' });
+    }
+    
+  } catch (error) {
+    console.error('Error responding to ride request:', error);
+    res.status(500).json({ error: 'Failed to respond to ride request' });
+  }
+});
+
+// Test endpoint to check all ride requests in database
+router.get('/test-all', async (req, res) => {
+  try {
+    const allRequests = await RideRequest.find({})
+      .populate('rider', 'firstName lastName rating totalRides')
+      .sort({ createdAt: -1 });
+    
+    console.log('🔧 All ride requests in database:', allRequests.length);
+    res.json({
+      total: allRequests.length,
+      requests: allRequests.map(req => ({
+        id: req._id,
+        status: req.status,
+        rider: req.rider,
+        createdAt: req.createdAt,
+        expiresAt: req.expiresAt
+      }))
+    });
+  } catch (error) {
+    console.error('Error fetching all requests:', error);
+    res.status(500).json({ error: 'Failed to fetch requests' });
+  }
+});
+
 // Get available ride requests for drivers
+// Simple endpoint to get all available requests for drivers (without location filtering)
+router.get('/available-simple', authenticateJWT, async (req, res) => {
+  try {
+    // Check if user is a driver
+    if (req.user.userType !== 'driver') {
+      return res.status(403).json({ error: 'Only drivers can view available requests' });
+    }
+
+    // Find all pending ride requests that haven't expired
+    const rideRequests = await RideRequest.find({
+      status: 'pending',
+      expiresAt: { $gt: new Date() }
+    })
+    .populate('rider', 'firstName lastName rating totalRides')
+    .sort({ createdAt: -1 })
+    .limit(20);
+
+    console.log('🔧 Found ride requests:', rideRequests.length);
+
+    // Format response
+    const formattedRequests = rideRequests.map(request => ({
+      id: request._id,
+      rider: request.rider,
+      pickup: request.pickupLocation,
+      destination: request.destination,
+      distance: request.distance,
+      estimatedDuration: request.estimatedDuration,
+      offeredFare: request.requestedPrice,
+      suggestedPrice: request.suggestedPrice,
+      notes: request.notes,
+      vehicleType: request.vehicleType,
+      paymentMethod: request.paymentMethod,
+      isUrgent: request.isUrgent,
+      createdAt: request.createdAt,
+      expiresAt: request.expiresAt,
+      timeRemaining: Math.max(0, Math.round((request.expiresAt - new Date()) / 1000 / 60)) // minutes
+    }));
+
+    res.json({
+      rideRequests: formattedRequests,
+      total: formattedRequests.length
+    });
+
+  } catch (error) {
+    console.error('Error fetching available requests:', error);
+    res.status(500).json({ error: 'Failed to fetch available requests' });
+  }
+});
+
 router.get('/available', authenticateJWT, async (req, res) => {
   try {
     // Check if user is a driver
