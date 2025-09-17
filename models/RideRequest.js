@@ -30,8 +30,13 @@ const rideRequestSchema = new mongoose.Schema({
   // Request status
   status: {
     type: String,
-    enum: ['pending', 'accepted', 'rejected', 'expired', 'cancelled'],
-    default: 'pending',
+    enum: ['searching', 'pending', 'accepted', 'rejected', 'expired', 'cancelled'],
+    default: 'searching',
+  },
+  
+  // Cancellation timestamp
+  cancelledAt: {
+    type: Date,
   },
   
   // Driver who accepted (if any)

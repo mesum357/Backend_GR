@@ -114,6 +114,19 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
       return res.status(403).json({ error: 'Only riders can create ride requests' });
     }
 
+    // Cancel any existing searching/pending requests from this rider
+    await RideRequest.updateMany(
+      { 
+        rider: req.user._id, 
+        status: { $in: ['searching', 'pending'] }
+      },
+      { 
+        status: 'cancelled',
+        cancelledAt: new Date()
+      }
+    );
+    console.log(`🚫 Cancelled previous searching/pending requests for rider ${req.user._id}`);
+
     // Calculate distance and duration
     const distance = calculateHaversineDistance(
       pickup.latitude,
@@ -146,7 +159,7 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
       paymentMethod: normalizedPaymentMethod,
       requestRadius: radiusMeters / 1000, // Convert meters to km
       expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes
-      status: 'pending'
+      status: 'searching'
     });
 
     await rideRequest.save();
@@ -390,9 +403,9 @@ router.get('/available-simple', authenticateJWT, async (req, res) => {
       return res.status(403).json({ error: 'Only drivers can view available requests' });
     }
 
-    // Find all pending ride requests that haven't expired
+    // Find all searching ride requests that haven't expired
     const rideRequests = await RideRequest.find({
-      status: 'pending',
+      status: 'searching',
       expiresAt: { $gt: new Date() }
     })
     .populate('rider', 'firstName lastName rating totalRides')
@@ -719,15 +732,21 @@ router.post('/:requestId/cancel', authenticateJWT, async (req, res) => {
       return res.status(403).json({ error: 'Not authorized to cancel this request' });
     }
 
-    if (rideRequest.status !== 'pending') {
-      return res.status(400).json({ error: 'Cannot cancel non-pending request' });
+    if (!['searching', 'pending'].includes(rideRequest.status)) {
+      return res.status(400).json({ error: 'Cannot cancel non-active request' });
     }
 
+    const oldStatus = rideRequest.status;
     rideRequest.status = 'cancelled';
+    rideRequest.cancelledAt = new Date();
     await rideRequest.save();
 
+    console.log(`🚫 Ride request ${requestId} cancelled by rider ${req.user._id} - Status changed from ${oldStatus} to cancelled`);
+
     res.json({
-      message: 'Ride request cancelled successfully'
+      message: 'Ride request cancelled successfully',
+      oldStatus,
+      newStatus: 'cancelled'
     });
 
   } catch (error) {
