@@ -413,6 +413,9 @@ router.get('/available-simple', authenticateJWT, async (req, res) => {
     .limit(20);
 
     console.log('🔧 Found ride requests:', rideRequests.length);
+    rideRequests.forEach(request => {
+      console.log(`🔧 Request ${request._id}: PKR ${request.requestedPrice} (suggested: ${request.suggestedPrice}) - Status: ${request.status}`);
+    });
 
     // Format response
     const formattedRequests = rideRequests.map(request => ({
@@ -742,6 +745,10 @@ router.post('/:requestId/cancel', authenticateJWT, async (req, res) => {
     await rideRequest.save();
 
     console.log(`🚫 Ride request ${requestId} cancelled by rider ${req.user._id} - Status changed from ${oldStatus} to cancelled`);
+    
+    // Verify the status was actually saved
+    const verifyRequest = await RideRequest.findById(requestId);
+    console.log(`🔍 Verification - Ride request ${requestId} status after save: ${verifyRequest.status}`);
 
     res.json({
       message: 'Ride request cancelled successfully',
@@ -752,6 +759,29 @@ router.post('/:requestId/cancel', authenticateJWT, async (req, res) => {
   } catch (error) {
     console.error('Error cancelling ride request:', error);
     res.status(500).json({ error: 'Failed to cancel ride request' });
+  }
+});
+
+// Debug endpoint to check ride request status
+router.get('/:requestId/debug', authenticateJWT, async (req, res) => {
+  try {
+    const { requestId } = req.params;
+    const rideRequest = await RideRequest.findById(requestId);
+    
+    if (!rideRequest) {
+      return res.status(404).json({ error: 'Ride request not found' });
+    }
+    
+    res.json({
+      id: rideRequest._id,
+      status: rideRequest.status,
+      rider: rideRequest.rider,
+      createdAt: rideRequest.createdAt,
+      cancelledAt: rideRequest.cancelledAt
+    });
+  } catch (error) {
+    console.error('Error fetching ride request debug info:', error);
+    res.status(500).json({ error: 'Failed to fetch ride request debug info' });
   }
 });
 
