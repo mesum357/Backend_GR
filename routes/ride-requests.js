@@ -364,6 +364,13 @@ router.get('/test-all', async (req, res) => {
         id: req._id,
         status: req.status,
         rider: req.rider,
+        requestedPrice: req.requestedPrice,
+        pickupLocation: req.pickupLocation,
+        destination: req.destination,
+        distance: req.distance,
+        estimatedDuration: req.estimatedDuration,
+        paymentMethod: req.paymentMethod,
+        notes: req.notes,
         createdAt: req.createdAt,
         expiresAt: req.expiresAt
       }))
@@ -402,7 +409,7 @@ router.get('/available-simple', authenticateJWT, async (req, res) => {
       destination: request.destination,
       distance: request.distance,
       estimatedDuration: request.estimatedDuration,
-      offeredFare: request.requestedPrice,
+      requestedPrice: request.requestedPrice,
       suggestedPrice: request.suggestedPrice,
       notes: request.notes,
       vehicleType: request.vehicleType,
