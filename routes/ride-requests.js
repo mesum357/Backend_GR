@@ -574,8 +574,22 @@ router.post('/:requestId/respond', authenticateJWT, async (req, res) => {
         driverResponse.status = 'accepted';
         driverResponse.respondedAt = new Date();
         
-        // Notify rider (in real app, send push notification)
         await rideRequest.save();
+        
+        // Emit WebSocket event to notify rider
+        const io = req.app.get('io');
+        if (io) {
+          const activeConnections = req.app.get('activeConnections');
+          const riderSocketId = activeConnections.get(rideRequest.rider.toString());
+          if (riderSocketId) {
+            io.to(riderSocketId).emit('driver_assigned', {
+              rideRequestId: rideRequest._id,
+              driverId: req.user._id,
+              message: 'Driver has been assigned to your ride'
+            });
+            console.log(`🚗 Notified rider ${rideRequest.rider} about driver assignment`);
+          }
+        }
         
         res.json({
           message: 'Ride request accepted successfully',
