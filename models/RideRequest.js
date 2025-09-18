@@ -59,6 +59,23 @@ const rideRequestSchema = new mongoose.Schema({
     viewedAt: { type: Date },
     respondedAt: { type: Date },
   }],
+
+  // Fare offers from drivers
+  fareOffers: [{
+    driver: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    driverName: { type: String, required: true },
+    driverRating: { type: Number, default: 4.5 },
+    fareAmount: { type: Number, required: true },
+    arrivalTime: { type: Number, required: true }, // in minutes
+    vehicleInfo: { type: String, default: 'Standard Vehicle' },
+    offeredAt: { type: Date, default: Date.now },
+    respondedAt: { type: Date },
+    status: { 
+      type: String, 
+      enum: ['pending', 'accepted', 'rejected'], 
+      default: 'pending' 
+    }
+  }],
   
   // Request metadata
   requestRadius: { type: Number, default: 5 }, // km radius to search for drivers
