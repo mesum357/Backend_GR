@@ -213,6 +213,129 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Handle fare offer from driver to rider
+  socket.on('fare_offer', async (data) => {
+    try {
+      const { rideRequestId, driverId, driverName, driverRating, fareAmount, arrivalTime, vehicleInfo } = data;
+      
+      // Find the ride request
+      const RideRequest = require('./models/RideRequest');
+      const rideRequest = await RideRequest.findById(rideRequestId);
+      
+      if (!rideRequest) {
+        socket.emit('error', { message: 'Ride request not found' });
+        return;
+      }
+
+      // Add fare offer to ride request
+      rideRequest.fareOffers.push({
+        driver: driverId,
+        driverName,
+        driverRating,
+        fareAmount,
+        arrivalTime,
+        vehicleInfo,
+        offeredAt: new Date(),
+        status: 'pending'
+      });
+
+      await rideRequest.save();
+
+      // Notify rider about the fare offer
+      const riderSocketId = activeConnections.get(rideRequest.rider.toString());
+      if (riderSocketId) {
+        io.to(riderSocketId).emit('fare_offer', {
+          rideRequestId,
+          driverId,
+          driverName,
+          driverRating,
+          fareAmount,
+          arrivalTime,
+          vehicleInfo
+        });
+        console.log(`💰 Fare offer sent to rider ${rideRequest.rider} from driver ${driverId}`);
+      }
+
+      socket.emit('fare_offer_sent', { message: 'Fare offer sent successfully' });
+
+    } catch (error) {
+      console.error('Error handling fare offer:', error);
+      socket.emit('error', { message: 'Failed to send fare offer' });
+    }
+  });
+
+  // Handle rider response to fare offer
+  socket.on('fare_response', async (data) => {
+    try {
+      const { rideRequestId, riderId, action } = data;
+      
+      // Find the ride request
+      const RideRequest = require('./models/RideRequest');
+      const rideRequest = await RideRequest.findById(rideRequestId);
+      
+      if (!rideRequest) {
+        socket.emit('error', { message: 'Ride request not found' });
+        return;
+      }
+
+      // Find the latest fare offer
+      const latestOffer = rideRequest.fareOffers[rideRequest.fareOffers.length - 1];
+      if (!latestOffer || latestOffer.status !== 'pending') {
+        socket.emit('error', { message: 'No pending fare offer found' });
+        return;
+      }
+
+      // Update offer status
+      latestOffer.status = action;
+      latestOffer.respondedAt = new Date();
+
+      if (action === 'accept') {
+        // Update ride request status
+        rideRequest.status = 'accepted';
+        rideRequest.acceptedBy = latestOffer.driver;
+        rideRequest.acceptedAt = new Date();
+        
+        // Cancel all other pending offers
+        rideRequest.fareOffers.forEach(offer => {
+          if (offer._id.toString() !== latestOffer._id.toString() && offer.status === 'pending') {
+            offer.status = 'rejected';
+            offer.respondedAt = new Date();
+          }
+        });
+      }
+
+      await rideRequest.save();
+
+      // Notify driver about the response
+      const driverSocketId = activeConnections.get(latestOffer.driver.toString());
+      if (driverSocketId) {
+        io.to(driverSocketId).emit('fare_response', {
+          rideRequestId,
+          riderId,
+          action,
+          timestamp: Date.now()
+        });
+        console.log(`💰 Fare response sent to driver ${latestOffer.driver} from rider ${riderId}: ${action}`);
+      }
+
+      // Notify rider about the response
+      const riderSocketId = activeConnections.get(riderId);
+      if (riderSocketId) {
+        io.to(riderSocketId).emit('fare_response_confirmed', {
+          rideRequestId,
+          action,
+          message: `Fare offer ${action}ed successfully`
+        });
+      }
+
+      socket.emit('fare_response_sent', { message: `Fare offer ${action}ed successfully` });
+
+    } catch (error) {
+      console.error('Error handling fare response:', error);
+      socket.emit('error', { message: 'Failed to process fare response' });
+    }
+  });
+
   // Handle rider accepting counter offer
   socket.on('accept_counter_offer', async (data) => {
     try {
