@@ -591,12 +591,19 @@ router.post('/:requestId/respond', authenticateJWT, async (req, res) => {
           }
           
           // Notify all drivers that this request is no longer available
-          io.emit('ride_request_status_update', {
-            rideRequestId: rideRequest._id,
-            oldStatus: 'searching',
-            newStatus: 'accepted',
-            message: 'Ride request has been accepted by a driver'
+          const driverConnections = req.app.get('driverConnections');
+          console.log(`📡 Notifying ${driverConnections.size} connected drivers about acceptance`);
+          
+          driverConnections.forEach((socketId, driverId) => {
+            io.to(socketId).emit('ride_request_status_update', {
+              rideRequestId: rideRequest._id,
+              oldStatus: 'searching',
+              newStatus: 'accepted',
+              message: 'Ride request has been accepted by a driver'
+            });
+            console.log(`📡 Sent status update to driver ${driverId} (socket: ${socketId})`);
           });
+          
           console.log(`📡 Notified all drivers about ride request ${rideRequest._id} acceptance`);
         }
         
@@ -772,14 +779,23 @@ router.post('/:requestId/cancel', authenticateJWT, async (req, res) => {
     // Emit WebSocket event to notify all drivers about the cancellation
     const io = req.app.get('io');
     if (io) {
-      io.emit('ride_request_cancelled', {
-        rideRequestId: requestId,
-        riderId: req.user._id,
-        message: 'Ride request has been cancelled by the rider',
-        oldStatus,
-        newStatus: 'cancelled'
+      // Get all connected drivers
+      const driverConnections = req.app.get('driverConnections');
+      console.log(`📡 Notifying ${driverConnections.size} connected drivers about cancellation`);
+      
+      // Emit to all connected drivers
+      driverConnections.forEach((socketId, driverId) => {
+        io.to(socketId).emit('ride_request_cancelled', {
+          rideRequestId: requestId,
+          riderId: req.user._id,
+          message: 'Ride request has been cancelled by the rider',
+          oldStatus,
+          newStatus: 'cancelled'
+        });
+        console.log(`📡 Sent cancellation notification to driver ${driverId} (socket: ${socketId})`);
       });
-      console.log(`📡 WebSocket notification sent: Ride request ${requestId} cancelled`);
+      
+      console.log(`📡 WebSocket notification sent to all drivers: Ride request ${requestId} cancelled`);
     }
     
     // Verify the status was actually saved
