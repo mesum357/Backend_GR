@@ -589,6 +589,15 @@ router.post('/:requestId/respond', authenticateJWT, async (req, res) => {
             });
             console.log(`🚗 Notified rider ${rideRequest.rider} about driver assignment`);
           }
+          
+          // Notify all drivers that this request is no longer available
+          io.emit('ride_request_status_update', {
+            rideRequestId: rideRequest._id,
+            oldStatus: 'searching',
+            newStatus: 'accepted',
+            message: 'Ride request has been accepted by a driver'
+          });
+          console.log(`📡 Notified all drivers about ride request ${rideRequest._id} acceptance`);
         }
         
         res.json({
@@ -759,6 +768,19 @@ router.post('/:requestId/cancel', authenticateJWT, async (req, res) => {
     await rideRequest.save();
 
     console.log(`🚫 Ride request ${requestId} cancelled by rider ${req.user._id} - Status changed from ${oldStatus} to cancelled`);
+    
+    // Emit WebSocket event to notify all drivers about the cancellation
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('ride_request_cancelled', {
+        rideRequestId: requestId,
+        riderId: req.user._id,
+        message: 'Ride request has been cancelled by the rider',
+        oldStatus,
+        newStatus: 'cancelled'
+      });
+      console.log(`📡 WebSocket notification sent: Ride request ${requestId} cancelled`);
+    }
     
     // Verify the status was actually saved
     const verifyRequest = await RideRequest.findById(requestId);
