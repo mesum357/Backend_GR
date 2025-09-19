@@ -199,7 +199,7 @@ io.on('connection', (socket) => {
             waitingForRider: true
           });
 
-          // Set up timeout for rider response (30 seconds)
+          // Set up timeout for rider response (15 seconds) - FIXED
           setTimeout(async () => {
             try {
               // Check if the ride request is still in 'accepted' status (rider hasn't responded)
@@ -208,7 +208,7 @@ io.on('connection', (socket) => {
                 // Timeout reached - cancel the acceptance and notify driver
                 currentRequest.status = 'cancelled';
                 currentRequest.cancelledAt = new Date();
-                currentRequest.cancellationReason = 'Rider did not respond within 30 seconds';
+                currentRequest.cancellationReason = 'Rider did not respond within 15 seconds';
                 await currentRequest.save();
 
                 // Notify driver about timeout
@@ -216,7 +216,7 @@ io.on('connection', (socket) => {
                 if (driverSocketId) {
                   io.to(driverSocketId).emit('fare_response_timeout', {
                     rideRequestId,
-                    message: 'Rider did not respond within 30 seconds. Request cancelled.',
+                    message: 'Rider did not respond within 15 seconds. Request cancelled.',
                     action: 'timeout'
                   });
                   console.log(`⏰ Fare offer timeout for ride request ${rideRequestId} - driver ${driverId} notified`);
@@ -234,7 +234,7 @@ io.on('connection', (socket) => {
             } catch (timeoutError) {
               console.error('Error handling fare offer timeout:', timeoutError);
             }
-          }, 30000); // 30 seconds timeout
+          }, 15000); // 15 seconds timeout - FIXED
         } else {
           socket.emit('error', { message: 'Ride request is no longer available' });
         }
