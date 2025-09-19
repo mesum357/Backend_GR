@@ -547,7 +547,7 @@ router.post('/:requestId/respond', authenticateJWT, async (req, res) => {
       return res.status(404).json({ error: 'Ride request not found' });
     }
 
-    if (rideRequest.status !== 'pending') {
+    if (!['searching', 'pending'].includes(rideRequest.status)) {
       return res.status(400).json({ error: 'Ride request is no longer available' });
     }
 
