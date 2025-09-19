@@ -151,18 +151,33 @@ io.on('connection', (socket) => {
       if (action === 'accept') {
         // Atomic assignment - only first accept wins
         if (rideRequest.status === 'pending') {
+          // Update status to 'accepted' but don't finalize yet - wait for rider response
           rideRequest.status = 'accepted';
           rideRequest.acceptedBy = driverId;
+          rideRequest.acceptedAt = new Date();
           await rideRequest.save();
 
-          // Notify rider
+          // Get driver information for the offer
+          const Driver = require('./models/Driver');
+          const driver = await Driver.findById(driverId).select('firstName lastName rating vehicleType vehicleModel');
+          
+          // Calculate arrival time (mock calculation - in real app, use actual distance/time)
+          const arrivalTime = Math.floor(Math.random() * 10) + 5; // 5-15 minutes
+          
+          // Notify rider with fare offer
           const riderSocketId = activeConnections.get(rideRequest.rider.toString());
           if (riderSocketId) {
-            io.to(riderSocketId).emit('driver_assigned', {
+            io.to(riderSocketId).emit('fare_offer', {
               rideRequestId,
               driverId,
-              message: 'Driver has been assigned to your ride'
+              driverName: driver ? `${driver.firstName} ${driver.lastName}` : 'Driver',
+              driverRating: driver ? driver.rating : 4.5,
+              fareAmount: counterOffer || rideRequest.offeredFare,
+              arrivalTime: arrivalTime,
+              vehicleInfo: driver ? `${driver.vehicleType} ${driver.vehicleModel}` : 'Vehicle',
+              timestamp: Date.now()
             });
+            console.log(`💰 Fare offer sent to rider ${rideRequest.rider} from driver ${driverId}`);
           }
 
           // Notify all other drivers that request is no longer available
@@ -178,7 +193,48 @@ io.on('connection', (socket) => {
             }
           });
 
-          socket.emit('response_success', { message: 'Ride request accepted successfully' });
+          socket.emit('response_success', { 
+            message: 'Ride request accepted successfully. Waiting for rider response...',
+            rideRequestId,
+            waitingForRider: true
+          });
+
+          // Set up timeout for rider response (30 seconds)
+          setTimeout(async () => {
+            try {
+              // Check if the ride request is still in 'accepted' status (rider hasn't responded)
+              const currentRequest = await RideRequest.findById(rideRequestId);
+              if (currentRequest && currentRequest.status === 'accepted') {
+                // Timeout reached - cancel the acceptance and notify driver
+                currentRequest.status = 'cancelled';
+                currentRequest.cancelledAt = new Date();
+                currentRequest.cancellationReason = 'Rider did not respond within 30 seconds';
+                await currentRequest.save();
+
+                // Notify driver about timeout
+                const driverSocketId = driverConnections.get(driverId);
+                if (driverSocketId) {
+                  io.to(driverSocketId).emit('fare_response_timeout', {
+                    rideRequestId,
+                    message: 'Rider did not respond within 30 seconds. Request cancelled.',
+                    action: 'timeout'
+                  });
+                  console.log(`⏰ Fare offer timeout for ride request ${rideRequestId} - driver ${driverId} notified`);
+                }
+
+                // Notify rider about timeout
+                if (riderSocketId) {
+                  io.to(riderSocketId).emit('fare_offer_timeout', {
+                    rideRequestId,
+                    message: 'Your response time has expired. Please request a new ride.',
+                    action: 'timeout'
+                  });
+                }
+              }
+            } catch (timeoutError) {
+              console.error('Error handling fare offer timeout:', timeoutError);
+            }
+          }, 30000); // 30 seconds timeout
         } else {
           socket.emit('error', { message: 'Ride request is no longer available' });
         }
