@@ -780,19 +780,24 @@ router.post('/:requestId/cancel', authenticateJWT, async (req, res) => {
       // Get all connected drivers
       const driverConnections = req.app.get('driverConnections');
       
+      console.log(`🔍 Driver connections available: ${driverConnections ? driverConnections.size : 0}`);
+      
       if (driverConnections && driverConnections.size > 0) {
         // Emit to all connected drivers
         driverConnections.forEach((socketId, driverId) => {
           try {
-            io.to(socketId).emit('ride_request_cancelled', {
+            const cancellationData = {
               rideRequestId: requestId,
               riderId: req.user._id,
               message: 'Ride request has been cancelled by the rider',
               oldStatus,
               newStatus: 'cancelled',
               timestamp: new Date().toISOString()
-            });
+            };
+            
+            io.to(socketId).emit('ride_request_cancelled', cancellationData);
             console.log(`📡 WebSocket notification sent to driver ${driverId} (${socketId}): Ride request ${requestId} cancelled`);
+            console.log(`📡 Cancellation data:`, cancellationData);
           } catch (wsError) {
             console.error(`❌ Failed to send WebSocket notification to driver ${driverId}:`, wsError);
           }
