@@ -403,9 +403,9 @@ router.get('/available-simple', authenticateJWT, async (req, res) => {
       return res.status(403).json({ error: 'Only drivers can view available requests' });
     }
 
-    // Find all searching ride requests that haven't expired
+    // Find all available ride requests that haven't expired
     const rideRequests = await RideRequest.find({
-      status: 'searching',
+      status: { $in: ['searching', 'pending'] },
       expiresAt: { $gt: new Date() }
     })
     .populate('rider', 'firstName lastName rating totalRides')
@@ -417,24 +417,44 @@ router.get('/available-simple', authenticateJWT, async (req, res) => {
       console.log(`🔧 Request ${request._id}: PKR ${request.requestedPrice} (suggested: ${request.suggestedPrice}) - Status: ${request.status}`);
     });
 
-    // Format response
-    const formattedRequests = rideRequests.map(request => ({
-      id: request._id,
-      rider: request.rider,
-      pickup: request.pickupLocation,
-      destination: request.destination,
-      distance: request.distance,
-      estimatedDuration: request.estimatedDuration,
-      requestedPrice: request.requestedPrice,
-      suggestedPrice: request.suggestedPrice,
-      notes: request.notes,
-      vehicleType: request.vehicleType,
-      paymentMethod: request.paymentMethod,
-      isUrgent: request.isUrgent,
-      createdAt: request.createdAt,
-      expiresAt: request.expiresAt,
-      timeRemaining: Math.max(0, Math.round((request.expiresAt - new Date()) / 1000 / 60)) // minutes
-    }));
+    // Format response to match frontend interface
+    const formattedRequests = rideRequests.map(request => {
+      const rider = request.rider;
+      const pickupLocation = request.pickupLocation;
+      const destination = request.destination;
+      
+      return {
+        _id: request._id,
+        id: request._id,
+        pickupLocation: pickupLocation?.address || 'Unknown location',
+        pickupLocationDetails: {
+          address: pickupLocation?.address || 'Unknown location',
+          coordinates: [pickupLocation?.longitude || 0, pickupLocation?.latitude || 0]
+        },
+        destinationDetails: {
+          address: destination?.address || 'Unknown destination',
+          coordinates: [destination?.longitude || 0, destination?.latitude || 0]
+        },
+        dropoffLocation: destination?.address || 'Unknown destination',
+        distance: request.distance || '0 km',
+        estimatedFare: request.suggestedPrice || request.requestedPrice || 0,
+        requestedPrice: request.requestedPrice || 0,
+        estimatedDuration: request.estimatedDuration || 0,
+        estimatedDistance: request.distance ? parseFloat(request.distance.replace(' km', '')) : 0,
+        riderName: rider ? `${rider.firstName} ${rider.lastName}` : 'Unknown Rider',
+        riderPhone: rider?.phone || 'N/A',
+        riderRating: rider?.rating || 4.5,
+        estimatedTime: request.estimatedDuration ? `${request.estimatedDuration} min` : 'Unknown',
+        requestTime: request.createdAt ? new Date(request.createdAt).toLocaleTimeString() : 'Unknown',
+        paymentMethod: request.paymentMethod || 'cash',
+        specialRequests: request.notes,
+        riderOffer: request.requestedPrice,
+        vehicleType: request.vehicleType,
+        autoAccept: false,
+        status: request.status,
+        createdAt: request.createdAt
+      };
+    });
 
     res.json({
       rideRequests: formattedRequests,
