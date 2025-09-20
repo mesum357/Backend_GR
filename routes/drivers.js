@@ -270,11 +270,16 @@ router.get('/check-registration', authenticateJWT, async (req, res) => {
   try {
     const driver = await Driver.findOne({ user: req.user._id });
     
+    // Check if user is registered as a driver (either through Driver model or userType)
+    const isDriverUser = req.user.userType === 'driver';
+    const isRegistered = !!driver || isDriverUser;
+    
     res.json({
-      isRegistered: !!driver,
-      isApproved: driver ? driver.isApproved : false,
-      isVerified: driver ? driver.isVerified : false,
-      isOnline: driver ? driver.isOnline : false
+      isRegistered,
+      isApproved: driver ? driver.isApproved : isDriverUser, // If userType is driver, consider approved
+      isVerified: driver ? driver.isVerified : isDriverUser, // If userType is driver, consider verified
+      isOnline: driver ? driver.isOnline : false,
+      driverProfile: driver || (isDriverUser ? { userType: 'driver' } : null)
     });
 
   } catch (error) {
