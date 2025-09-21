@@ -163,6 +163,12 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
     });
 
     await rideRequest.save();
+    console.log('🔧 Ride request saved to database:', {
+      id: rideRequest._id,
+      status: rideRequest.status,
+      expiresAt: rideRequest.expiresAt,
+      createdAt: rideRequest.createdAt
+    });
 
     // Find drivers within 1.2km radius using Haversine formula
     const nearbyDrivers = await findDriversWithinRadius(
@@ -170,14 +176,17 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
       pickup.longitude,
       radiusMeters / 1000 // Convert to km
     );
+    
+    console.log('🔧 Found nearby drivers:', nearbyDrivers.length);
 
     // Get socket.io instance
     const io = req.app.get('io');
 
     // Send ride request to each nearby driver via socket
     for (const driver of nearbyDrivers) {
-      const driverSocketId = req.app.get('driverConnections')?.get(driver._id.toString());
+      const driverSocketId = req.app.get('driverConnections')?.get(driver.user._id.toString());
       if (driverSocketId) {
+        console.log('🔧 Sending ride request to driver:', driver.user._id);
         io.to(driverSocketId).emit('ride_request', {
           rideRequestId: rideRequest._id,
           rider: {
@@ -200,7 +209,7 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
 
         // Add driver to available drivers list
         rideRequest.availableDrivers.push({
-          driver: driver._id,
+          driver: driver.user._id,
           distance: calculateHaversineDistance(
             pickup.latitude,
             pickup.longitude,
@@ -215,6 +224,8 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
           ) * 2),
           viewedAt: new Date()
         });
+      } else {
+        console.log('🔧 Driver not connected via WebSocket:', driver.user._id);
       }
     }
 
@@ -254,18 +265,21 @@ function calculateHaversineDistance(lat1, lon1, lat2, lon2) {
 
 // Helper function to find drivers within radius
 async function findDriversWithinRadius(latitude, longitude, radiusKm) {
-  const User = require('../models/User');
+  const Driver = require('../models/Driver');
   
-  // Get all online drivers
-  const drivers = await User.find({
-    userType: 'driver',
+  // Get all online and available drivers from Driver model
+  const drivers = await Driver.find({
     isOnline: true,
-    isAvailable: true
-  });
+    isAvailable: true,
+    isApproved: true
+  }).populate('user', 'firstName lastName phone rating');
+
+  console.log('🔧 Found drivers in Driver model:', drivers.length);
 
   // Filter drivers within radius using Haversine formula
   const nearbyDrivers = drivers.filter(driver => {
     if (!driver.currentLocation || !driver.currentLocation.coordinates) {
+      console.log('🔧 Driver has no location:', driver._id);
       return false;
     }
     
@@ -407,9 +421,12 @@ router.get('/available-simple', authenticateJWT, async (req, res) => {
     }
 
     // Find all available ride requests that haven't expired
+    const currentTime = new Date();
+    console.log('🔧 Current time:', currentTime.toISOString());
+    
     const rideRequests = await RideRequest.find({
       status: { $in: ['searching', 'pending'] },
-      expiresAt: { $gt: new Date() }
+      expiresAt: { $gt: currentTime }
     })
     .populate('rider', 'firstName lastName rating totalRides')
     .sort({ createdAt: -1 })
@@ -420,6 +437,13 @@ router.get('/available-simple', authenticateJWT, async (req, res) => {
     console.log('🔧 Driver profile exists:', !!driverProfile);
     console.log('🔧 Driver isOnline:', driverProfile?.isOnline);
     console.log('🔧 Driver isAvailable:', driverProfile?.isAvailable);
+    
+    // Debug: Check all ride requests in database
+    const allRequests = await RideRequest.find({}).sort({ createdAt: -1 }).limit(5);
+    console.log('🔧 All recent ride requests in DB:', allRequests.length);
+    allRequests.forEach(req => {
+      console.log(`🔧 DB Request ${req._id}: status=${req.status}, expiresAt=${req.expiresAt}, createdAt=${req.createdAt}`);
+    });
     
     rideRequests.forEach(request => {
       console.log(`🔧 Request ${request._id}: PKR ${request.requestedPrice} (suggested: ${request.suggestedPrice}) - Status: ${request.status}`);
@@ -928,6 +952,11 @@ router.post('/create-test-request', authenticateJWT, async (req, res) => {
     });
 
     await testRequest.save();
+    console.log('🔧 Test ride request created:', {
+      id: testRequest._id,
+      status: testRequest.status,
+      expiresAt: testRequest.expiresAt
+    });
 
     res.status(201).json({
       message: 'Test ride request created successfully',
@@ -941,6 +970,57 @@ router.post('/create-test-request', authenticateJWT, async (req, res) => {
   } catch (error) {
     console.error('Error creating test ride request:', error);
     res.status(500).json({ error: 'Failed to create test ride request' });
+  }
+});
+
+// Test endpoint to check available ride requests (for development only)
+router.get('/test-available', authenticateJWT, async (req, res) => {
+  try {
+    // Only allow in development
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(403).json({ error: 'Test endpoint not available in production' });
+    }
+
+    // Check if user is a driver
+    if (req.user.userType !== 'driver') {
+      return res.status(403).json({ error: 'Only drivers can test available requests' });
+    }
+
+    const currentTime = new Date();
+    console.log('🔧 Test - Current time:', currentTime.toISOString());
+    
+    // Find all ride requests
+    const allRequests = await RideRequest.find({}).sort({ createdAt: -1 }).limit(10);
+    console.log('🔧 Test - All ride requests:', allRequests.length);
+    
+    // Find available ride requests
+    const availableRequests = await RideRequest.find({
+      status: { $in: ['searching', 'pending'] },
+      expiresAt: { $gt: currentTime }
+    }).sort({ createdAt: -1 }).limit(10);
+    
+    console.log('🔧 Test - Available ride requests:', availableRequests.length);
+    
+    res.json({
+      message: 'Test results',
+      currentTime: currentTime.toISOString(),
+      allRequests: allRequests.map(req => ({
+        id: req._id,
+        status: req.status,
+        expiresAt: req.expiresAt,
+        createdAt: req.createdAt
+      })),
+      availableRequests: availableRequests.map(req => ({
+        id: req._id,
+        status: req.status,
+        expiresAt: req.expiresAt,
+        createdAt: req.createdAt
+      }))
+    });
+
+  } catch (error) {
+    console.error('Error testing available requests:', error);
+    res.status(500).json({ error: 'Failed to test available requests' });
   }
 });
 
