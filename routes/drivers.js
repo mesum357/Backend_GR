@@ -58,7 +58,11 @@ router.post('/register', authenticateJWT, async (req, res) => {
     const driver = await Driver.createDriverProfile(req.user._id, driverData);
 
     // Update user type to driver
-    await User.findByIdAndUpdate(req.user._id, { userType: 'driver' });
+    const updatedUser = await User.findByIdAndUpdate(
+      req.user._id, 
+      { userType: 'driver' },
+      { new: true }
+    );
 
     res.status(201).json({
       message: 'Driver registration successful',
@@ -66,7 +70,8 @@ router.post('/register', authenticateJWT, async (req, res) => {
         id: driver._id,
         isApproved: driver.isApproved,
         isVerified: driver.isVerified
-      }
+      },
+      user: updatedUser.getPublicProfile() // Return updated user data
     });
 
   } catch (error) {
