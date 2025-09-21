@@ -320,6 +320,55 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Handle rider-initiated ride cancellation and broadcast to drivers
+  socket.on('ride_cancelled', async (data) => {
+    try {
+      const { rideRequestId, userId, userType } = data;
+      const RideRequest = require('./models/RideRequest');
+
+      const rideRequest = await RideRequest.findById(rideRequestId);
+      if (!rideRequest) {
+        socket.emit('error', { message: 'Ride request not found' });
+        return;
+      }
+
+      // Only allow rider or accepted driver to cancel for safety
+      if (userType === 'rider' && rideRequest.rider.toString() !== userId) {
+        socket.emit('error', { message: 'Not authorized to cancel this ride request' });
+        return;
+      }
+
+      // Update status to cancelled
+      rideRequest.status = 'cancelled';
+      rideRequest.cancelledAt = new Date();
+      await rideRequest.save();
+
+      // Notify accepted driver if any
+      if (rideRequest.acceptedBy) {
+        const acceptedDriverSocketId = driverConnections.get(rideRequest.acceptedBy.toString());
+        if (acceptedDriverSocketId) {
+          io.to(acceptedDriverSocketId).emit('ride_cancelled', { rideRequestId });
+        }
+      }
+
+      // Notify all available drivers who saw this request
+      if (Array.isArray(rideRequest.availableDrivers)) {
+        rideRequest.availableDrivers.forEach((entry) => {
+          const driverSocketId = driverConnections.get((entry.driver || '').toString());
+          if (driverSocketId) {
+            io.to(driverSocketId).emit('ride_cancelled', { rideRequestId });
+          }
+        });
+      }
+
+      // Acknowledge back to requester
+      socket.emit('ride_cancelled_ack', { rideRequestId, status: 'ok' });
+    } catch (err) {
+      console.error('Error handling ride_cancelled event:', err);
+      socket.emit('error', { message: 'Failed to cancel ride request' });
+    }
+  });
+
   // Handle rider response to fare offer
   socket.on('fare_response', async (data) => {
     try {
