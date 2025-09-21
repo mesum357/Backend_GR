@@ -57,9 +57,10 @@ router.post('/register', authenticateJWT, async (req, res) => {
 
     const driver = await Driver.createDriverProfile(req.user._id, driverData);
 
-    // Set driver as online and available by default
+    // Set driver as online, available, and approved by default for development
     driver.isOnline = true;
     driver.isAvailable = true;
+    driver.isApproved = true; // Auto-approve for development
     await driver.save();
 
     // Update user type to driver

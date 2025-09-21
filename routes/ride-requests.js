@@ -267,6 +267,9 @@ function calculateHaversineDistance(lat1, lon1, lat2, lon2) {
 async function findDriversWithinRadius(latitude, longitude, radiusKm) {
   const Driver = require('../models/Driver');
   
+  console.log('🔍 [findDriversWithinRadius] Starting search...');
+  console.log('🔍 [findDriversWithinRadius] Search params:', { latitude, longitude, radiusKm });
+  
   // Get all online and available drivers from Driver model
   const drivers = await Driver.find({
     isOnline: true,
@@ -274,12 +277,26 @@ async function findDriversWithinRadius(latitude, longitude, radiusKm) {
     isApproved: true
   }).populate('user', 'firstName lastName phone rating');
 
-  console.log('🔧 Found drivers in Driver model:', drivers.length);
+  console.log('🔍 [findDriversWithinRadius] Total drivers found in DB:', drivers.length);
+  
+  // Debug each driver's status
+  drivers.forEach((driver, index) => {
+    console.log(`🔍 [findDriversWithinRadius] Driver ${index + 1}:`, {
+      id: driver._id,
+      userId: driver.user?._id,
+      isOnline: driver.isOnline,
+      isAvailable: driver.isAvailable,
+      isApproved: driver.isApproved,
+      hasLocation: !!driver.currentLocation,
+      coordinates: driver.currentLocation?.coordinates,
+      userName: driver.user ? `${driver.user.firstName} ${driver.user.lastName}` : 'No user data'
+    });
+  });
 
   // Filter drivers within radius using Haversine formula
   const nearbyDrivers = drivers.filter(driver => {
     if (!driver.currentLocation || !driver.currentLocation.coordinates) {
-      console.log('🔧 Driver has no location:', driver._id);
+      console.log('🔍 [findDriversWithinRadius] Driver has no location:', driver._id);
       return false;
     }
     
@@ -290,9 +307,13 @@ async function findDriversWithinRadius(latitude, longitude, radiusKm) {
       driver.currentLocation.coordinates[0]  // longitude
     );
     
-    return distance <= radiusKm;
+    const isWithinRadius = distance <= radiusKm;
+    console.log(`🔍 [findDriversWithinRadius] Driver ${driver._id} distance: ${distance.toFixed(2)}km, within radius: ${isWithinRadius}`);
+    
+    return isWithinRadius;
   });
 
+  console.log('🔍 [findDriversWithinRadius] Final nearby drivers:', nearbyDrivers.length);
   return nearbyDrivers;
 }
 
@@ -1021,6 +1042,67 @@ router.get('/test-available', authenticateJWT, async (req, res) => {
   } catch (error) {
     console.error('Error testing available requests:', error);
     res.status(500).json({ error: 'Failed to test available requests' });
+  }
+});
+
+// Debug endpoint to check driver status
+router.get('/debug-drivers', authenticateJWT, async (req, res) => {
+  try {
+    // Only allow in development
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(403).json({ error: 'Debug endpoint not available in production' });
+    }
+
+    const Driver = require('../models/Driver');
+    
+    // Get all drivers
+    const allDrivers = await Driver.find({}).populate('user', 'firstName lastName email');
+    
+    // Get online drivers
+    const onlineDrivers = await Driver.find({
+      isOnline: true
+    }).populate('user', 'firstName lastName email');
+    
+    // Get available drivers
+    const availableDrivers = await Driver.find({
+      isOnline: true,
+      isAvailable: true
+    }).populate('user', 'firstName lastName email');
+    
+    // Get approved drivers
+    const approvedDrivers = await Driver.find({
+      isApproved: true
+    }).populate('user', 'firstName lastName email');
+    
+    // Get drivers with location
+    const driversWithLocation = await Driver.find({
+      currentLocation: { $exists: true, $ne: null }
+    }).populate('user', 'firstName lastName email');
+    
+    res.json({
+      message: 'Driver debug information',
+      totalDrivers: allDrivers.length,
+      onlineDrivers: onlineDrivers.length,
+      availableDrivers: availableDrivers.length,
+      approvedDrivers: approvedDrivers.length,
+      driversWithLocation: driversWithLocation.length,
+      allDrivers: allDrivers.map(driver => ({
+        id: driver._id,
+        userId: driver.user?._id,
+        userName: driver.user ? `${driver.user.firstName} ${driver.user.lastName}` : 'No user',
+        isOnline: driver.isOnline,
+        isAvailable: driver.isAvailable,
+        isApproved: driver.isApproved,
+        isVerified: driver.isVerified,
+        hasLocation: !!driver.currentLocation,
+        coordinates: driver.currentLocation?.coordinates,
+        lastActive: driver.lastActive
+      }))
+    });
+
+  } catch (error) {
+    console.error('Error debugging drivers:', error);
+    res.status(500).json({ error: 'Failed to debug drivers' });
   }
 });
 
