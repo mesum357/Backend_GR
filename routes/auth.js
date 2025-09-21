@@ -48,12 +48,20 @@ router.post('/register', async (req, res) => {
           currentLocation: {
             type: 'Point',
             coordinates: [74.3144, 35.9208] // Default to Gilgit City Center
-          }
+          },
+          isOnline: true,
+          isAvailable: true,
+          isApproved: true // Auto-approve for development
         };
 
         console.log('Creating driver profile with data:', driverData);
         const driver = await Driver.createDriverProfile(user._id, driverData);
         console.log('Driver profile created successfully:', driver._id);
+        console.log('Driver profile details:', {
+          isApproved: driver.isApproved,
+          isOnline: driver.isOnline,
+          isAvailable: driver.isAvailable
+        });
       } catch (driverError) {
         console.error('Error creating driver profile:', driverError);
         // Don't fail the registration if driver profile creation fails
