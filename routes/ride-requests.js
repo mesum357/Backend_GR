@@ -423,6 +423,17 @@ router.get('/available-simple', authenticateJWT, async (req, res) => {
       const pickupLocation = request.pickupLocation;
       const destination = request.destination;
       
+      // Normalize distance values (schema uses Number, legacy could be String)
+      const numericDistance = typeof request.distance === 'number'
+        ? request.distance
+        : (typeof request.distance === 'string'
+            ? parseFloat((request.distance || '0').toString().replace(' km', ''))
+            : 0);
+
+      const distanceLabel = Number.isFinite(numericDistance)
+        ? `${numericDistance.toFixed(1)} km`
+        : '0 km';
+
       return {
         _id: request._id,
         id: request._id,
@@ -436,11 +447,11 @@ router.get('/available-simple', authenticateJWT, async (req, res) => {
           coordinates: [destination?.longitude || 0, destination?.latitude || 0]
         },
         dropoffLocation: destination?.address || 'Unknown destination',
-        distance: request.distance || '0 km',
+        distance: distanceLabel,
         estimatedFare: request.suggestedPrice || request.requestedPrice || 0,
         requestedPrice: request.requestedPrice || 0,
         estimatedDuration: request.estimatedDuration || 0,
-        estimatedDistance: request.distance ? parseFloat(request.distance.replace(' km', '')) : 0,
+        estimatedDistance: Number.isFinite(numericDistance) ? numericDistance : 0,
         riderName: rider ? `${rider.firstName} ${rider.lastName}` : 'Unknown Rider',
         riderPhone: rider?.phone || 'N/A',
         riderRating: rider?.rating || 4.5,
