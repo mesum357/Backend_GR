@@ -398,8 +398,11 @@ router.get('/test-all', async (req, res) => {
 // Simple endpoint to get all available requests for drivers (without location filtering)
 router.get('/available-simple', authenticateJWT, async (req, res) => {
   try {
-    // Check if user is a driver
-    if (req.user.userType !== 'driver') {
+    // Check if user is a driver (either by userType or has Driver profile)
+    const Driver = require('../models/Driver');
+    const driverProfile = await Driver.findOne({ user: req.user._id });
+    
+    if (req.user.userType !== 'driver' && !driverProfile) {
       return res.status(403).json({ error: 'Only drivers can view available requests' });
     }
 
@@ -413,6 +416,11 @@ router.get('/available-simple', authenticateJWT, async (req, res) => {
     .limit(20);
 
     console.log('🔧 Found ride requests:', rideRequests.length);
+    console.log('🔧 Driver userType:', req.user.userType);
+    console.log('🔧 Driver profile exists:', !!driverProfile);
+    console.log('🔧 Driver isOnline:', driverProfile?.isOnline);
+    console.log('🔧 Driver isAvailable:', driverProfile?.isAvailable);
+    
     rideRequests.forEach(request => {
       console.log(`🔧 Request ${request._id}: PKR ${request.requestedPrice} (suggested: ${request.suggestedPrice}) - Status: ${request.status}`);
     });
@@ -878,6 +886,61 @@ router.get('/:requestId/debug', authenticateJWT, async (req, res) => {
   } catch (error) {
     console.error('Error fetching ride request debug info:', error);
     res.status(500).json({ error: 'Failed to fetch ride request debug info' });
+  }
+});
+
+// Test endpoint to create sample ride requests (for development only)
+router.post('/create-test-request', authenticateJWT, async (req, res) => {
+  try {
+    // Only allow in development
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(403).json({ error: 'Test endpoint not available in production' });
+    }
+
+    // Check if user is a rider
+    if (req.user.userType !== 'rider') {
+      return res.status(403).json({ error: 'Only riders can create test requests' });
+    }
+
+    // Create a test ride request
+    const testRequest = new RideRequest({
+      rider: req.user._id,
+      pickupLocation: {
+        latitude: 35.9208,
+        longitude: 74.3144,
+        address: 'Gilgit City Center'
+      },
+      destination: {
+        latitude: 35.9308,
+        longitude: 74.3244,
+        address: 'Gilgit Airport'
+      },
+      distance: 1.2,
+      estimatedDuration: 5,
+      requestedPrice: 150,
+      suggestedPrice: 150,
+      notes: 'Test ride request',
+      vehicleType: 'car',
+      paymentMethod: 'cash',
+      requestRadius: 5,
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes
+      status: 'searching'
+    });
+
+    await testRequest.save();
+
+    res.status(201).json({
+      message: 'Test ride request created successfully',
+      rideRequest: {
+        id: testRequest._id,
+        status: testRequest.status,
+        expiresAt: testRequest.expiresAt
+      }
+    });
+
+  } catch (error) {
+    console.error('Error creating test ride request:', error);
+    res.status(500).json({ error: 'Failed to create test ride request' });
   }
 });
 
