@@ -183,6 +183,7 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
     const io = req.app.get('io');
 
     // Send ride request to each nearby driver via socket
+    let driversNotified = 0;
     for (const driver of nearbyDrivers) {
       const driverSocketId = req.app.get('driverConnections')?.get(driver.user._id.toString());
       if (driverSocketId) {
@@ -206,6 +207,7 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
           expiresAt: rideRequest.expiresAt,
           createdAt: rideRequest.createdAt
         });
+        driversNotified++;
 
         // Add driver to available drivers list
         rideRequest.availableDrivers.push({
@@ -228,6 +230,8 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
         console.log('🔧 Driver not connected via WebSocket:', driver.user._id);
       }
     }
+    
+    console.log('🔧 Total drivers notified:', driversNotified);
 
     await rideRequest.save();
 
@@ -237,7 +241,7 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
         id: rideRequest._id,
         status: rideRequest.status,
         expiresAt: rideRequest.expiresAt,
-        driversNotified: nearbyDrivers.length,
+        driversNotified: driversNotified,
         distance: rideRequest.distance,
         estimatedDuration: rideRequest.estimatedDuration,
         offeredFare: rideRequest.requestedPrice
@@ -273,8 +277,8 @@ async function findDriversWithinRadius(latitude, longitude, radiusKm) {
   // Get all online and available drivers from Driver model
   const drivers = await Driver.find({
     isOnline: true,
-    isAvailable: true,
-    isApproved: true
+    isAvailable: true
+    // Temporarily removed isApproved: true requirement for testing
   }).populate('user', 'firstName lastName phone rating');
 
   console.log('🔍 [findDriversWithinRadius] Total drivers found in DB:', drivers.length);

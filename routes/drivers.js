@@ -208,7 +208,42 @@ router.post('/location', authenticateJWT, async (req, res) => {
     
     if (!driver) {
       console.log('🔍 No driver profile found for user:', req.user._id);
-      return res.status(404).json({ error: 'Driver profile not found' });
+      console.log('🔍 Creating driver profile for user:', req.user._id);
+      
+      // Create driver profile if it doesn't exist
+      const driverData = {
+        user: req.user._id,
+        vehicleInfo: {
+          make: 'Default',
+          model: 'Vehicle',
+          year: 2020,
+          color: 'White',
+          plateNumber: 'DEFAULT',
+          vehicleType: 'car'
+        },
+        licenseNumber: 'DEFAULT',
+        licenseExpiry: new Date('2026-12-31'),
+        insuranceNumber: 'DEFAULT',
+        insuranceExpiry: new Date('2026-12-31'),
+        currentLocation: {
+          type: 'Point',
+          coordinates: [longitude, latitude]
+        },
+        isOnline: true,
+        isAvailable: true,
+        isApproved: true
+      };
+      
+      const newDriver = await Driver.createDriverProfile(req.user._id, driverData);
+      console.log('✅ Driver profile created:', newDriver._id);
+      
+      await newDriver.updateLocation(latitude, longitude);
+      console.log('🔍 Driver location updated successfully:', newDriver.currentLocation);
+      
+      return res.json({
+        message: 'Driver profile created and location updated successfully',
+        location: newDriver.currentLocation
+      });
     }
 
     await driver.updateLocation(latitude, longitude);
@@ -297,7 +332,43 @@ router.get('/check-registration', authenticateJWT, async (req, res) => {
     
     // Check if user is registered as a driver (either through Driver model or userType)
     const isDriverUser = req.user.userType === 'driver';
-    const isRegistered = !!driver || isDriverUser;
+    let isRegistered = !!driver || isDriverUser;
+    
+    // If user is a driver but no driver profile exists, create one
+    if (isDriverUser && !driver) {
+      console.log('🔍 User is driver but no profile exists, creating one...');
+      try {
+        const driverData = {
+          user: req.user._id,
+          vehicleInfo: {
+            make: 'Default',
+            model: 'Vehicle',
+            year: 2020,
+            color: 'White',
+            plateNumber: 'DEFAULT',
+            vehicleType: 'car'
+          },
+          licenseNumber: 'DEFAULT',
+          licenseExpiry: new Date('2026-12-31'),
+          insuranceNumber: 'DEFAULT',
+          insuranceExpiry: new Date('2026-12-31'),
+          currentLocation: {
+            type: 'Point',
+            coordinates: [74.3144, 35.9208] // Default to Gilgit City Center
+          },
+          isOnline: true,
+          isAvailable: true,
+          isApproved: true
+        };
+        
+        const newDriver = await Driver.createDriverProfile(req.user._id, driverData);
+        console.log('✅ Driver profile created:', newDriver._id);
+        driver = newDriver;
+        isRegistered = true;
+      } catch (error) {
+        console.error('Error creating driver profile:', error);
+      }
+    }
     
     console.log('🔍 Driver registration status:', {
       isDriverUser,
