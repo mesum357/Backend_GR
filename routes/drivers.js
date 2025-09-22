@@ -57,10 +57,9 @@ router.post('/register', authenticateJWT, async (req, res) => {
 
     const driver = await Driver.createDriverProfile(req.user._id, driverData);
 
-    // Set driver as online, available, and approved by default for development
+    // Set driver as online and available by default
     driver.isOnline = true;
     driver.isAvailable = true;
-    driver.isApproved = true; // Auto-approve for development
     await driver.save();
 
     // Update user type to driver
@@ -193,62 +192,16 @@ router.post('/location', authenticateJWT, async (req, res) => {
   try {
     const { latitude, longitude } = req.body;
 
-    console.log('🔍 Driver location update request:', { 
-      userId: req.user._id, 
-      latitude, 
-      longitude 
-    });
-
     if (!latitude || !longitude) {
       return res.status(400).json({ error: 'Latitude and longitude are required' });
     }
 
     const driver = await Driver.findOne({ user: req.user._id });
-    console.log('🔍 Driver found:', !!driver);
-    
     if (!driver) {
-      console.log('🔍 No driver profile found for user:', req.user._id);
-      console.log('🔍 Creating driver profile for user:', req.user._id);
-      
-      // Create driver profile if it doesn't exist
-      const driverData = {
-        user: req.user._id,
-        vehicleInfo: {
-          make: 'Default',
-          model: 'Vehicle',
-          year: 2020,
-          color: 'White',
-          plateNumber: 'DEFAULT',
-          vehicleType: 'car'
-        },
-        licenseNumber: 'DEFAULT',
-        licenseExpiry: new Date('2026-12-31'),
-        insuranceNumber: 'DEFAULT',
-        insuranceExpiry: new Date('2026-12-31'),
-        currentLocation: {
-          type: 'Point',
-          coordinates: [longitude, latitude]
-        },
-        isOnline: true,
-        isAvailable: true,
-        isApproved: true
-      };
-      
-      const newDriver = await Driver.createDriverProfile(req.user._id, driverData);
-      console.log('✅ Driver profile created:', newDriver._id);
-      
-      await newDriver.updateLocation(latitude, longitude);
-      console.log('🔍 Driver location updated successfully:', newDriver.currentLocation);
-      
-      return res.json({
-        message: 'Driver profile created and location updated successfully',
-        location: newDriver.currentLocation
-      });
+      return res.status(404).json({ error: 'Driver profile not found' });
     }
 
     await driver.updateLocation(latitude, longitude);
-
-    console.log('🔍 Driver location updated successfully:', driver.currentLocation);
 
     res.json({
       message: 'Location updated successfully',
@@ -325,58 +278,11 @@ router.get('/available-requests', authenticateJWT, async (req, res) => {
 // Check if user is registered as driver
 router.get('/check-registration', authenticateJWT, async (req, res) => {
   try {
-    console.log('🔍 Checking driver registration for user:', req.user._id);
-    
     const driver = await Driver.findOne({ user: req.user._id });
-    console.log('🔍 Driver profile found:', !!driver);
     
     // Check if user is registered as a driver (either through Driver model or userType)
     const isDriverUser = req.user.userType === 'driver';
-    let isRegistered = !!driver || isDriverUser;
-    
-    // If user is a driver but no driver profile exists, create one
-    if (isDriverUser && !driver) {
-      console.log('🔍 User is driver but no profile exists, creating one...');
-      try {
-        const driverData = {
-          user: req.user._id,
-          vehicleInfo: {
-            make: 'Default',
-            model: 'Vehicle',
-            year: 2020,
-            color: 'White',
-            plateNumber: 'DEFAULT',
-            vehicleType: 'car'
-          },
-          licenseNumber: 'DEFAULT',
-          licenseExpiry: new Date('2026-12-31'),
-          insuranceNumber: 'DEFAULT',
-          insuranceExpiry: new Date('2026-12-31'),
-          currentLocation: {
-            type: 'Point',
-            coordinates: [74.3144, 35.9208] // Default to Gilgit City Center
-          },
-          isOnline: true,
-          isAvailable: true,
-          isApproved: true
-        };
-        
-        const newDriver = await Driver.createDriverProfile(req.user._id, driverData);
-        console.log('✅ Driver profile created:', newDriver._id);
-        driver = newDriver;
-        isRegistered = true;
-      } catch (error) {
-        console.error('Error creating driver profile:', error);
-      }
-    }
-    
-    console.log('🔍 Driver registration status:', {
-      isDriverUser,
-      isRegistered,
-      hasDriverProfile: !!driver,
-      driverApproved: driver?.isApproved,
-      driverOnline: driver?.isOnline
-    });
+    const isRegistered = !!driver || isDriverUser;
     
     res.json({
       isRegistered,
@@ -389,100 +295,6 @@ router.get('/check-registration', authenticateJWT, async (req, res) => {
   } catch (error) {
     console.error('Error checking driver registration:', error);
     res.status(500).json({ error: 'Failed to check driver registration' });
-  }
-});
-
-// Debug endpoint to create driver profile for existing user
-router.post('/create-profile', authenticateJWT, async (req, res) => {
-  try {
-    // Only allow in development
-    if (process.env.NODE_ENV === 'production') {
-      return res.status(403).json({ error: 'Debug endpoint not available in production' });
-    }
-
-    console.log('🔍 Creating driver profile for user:', req.user._id);
-    
-    // Check if driver profile already exists
-    const existingDriver = await Driver.findOne({ user: req.user._id });
-    if (existingDriver) {
-      return res.status(400).json({ error: 'Driver profile already exists' });
-    }
-
-    // Create driver profile
-    const driverData = {
-      user: req.user._id,
-      vehicleInfo: {
-        make: 'Test',
-        model: 'Car',
-        year: 2020,
-        color: 'White',
-        plateNumber: 'TEST123',
-        vehicleType: 'car'
-      },
-      licenseNumber: 'TEST123',
-      licenseExpiry: new Date('2026-12-31'),
-      insuranceNumber: 'INS123',
-      insuranceExpiry: new Date('2026-12-31'),
-      currentLocation: {
-        type: 'Point',
-        coordinates: [74.3144, 35.9208] // Default to Gilgit City Center
-      },
-      isOnline: true,
-      isAvailable: true,
-      isApproved: true
-    };
-
-    const driver = await Driver.createDriverProfile(req.user._id, driverData);
-    console.log('✅ Driver profile created:', driver._id);
-
-    res.json({
-      message: 'Driver profile created successfully',
-      driver: {
-        id: driver._id,
-        isApproved: driver.isApproved,
-        isOnline: driver.isOnline,
-        isAvailable: driver.isAvailable
-      }
-    });
-
-  } catch (error) {
-    console.error('Error creating driver profile:', error);
-    res.status(500).json({ error: 'Failed to create driver profile' });
-  }
-});
-
-// Debug endpoint to approve all drivers (for testing)
-router.post('/approve-all', authenticateJWT, async (req, res) => {
-  try {
-    // Only allow in development
-    if (process.env.NODE_ENV === 'production') {
-      return res.status(403).json({ error: 'Debug endpoint not available in production' });
-    }
-
-    console.log('🔧 Approving all drivers...');
-    
-    const result = await Driver.updateMany(
-      { isApproved: false },
-      { 
-        $set: { 
-          isApproved: true,
-          isVerified: true,
-          isOnline: true,
-          isAvailable: true
-        } 
-      }
-    );
-
-    console.log('✅ Approved drivers:', result.modifiedCount);
-
-    res.json({
-      message: 'All drivers approved successfully',
-      modifiedCount: result.modifiedCount
-    });
-
-  } catch (error) {
-    console.error('Error approving drivers:', error);
-    res.status(500).json({ error: 'Failed to approve drivers' });
   }
 });
 
