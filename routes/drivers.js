@@ -223,11 +223,30 @@ router.post('/location', authenticateJWT, async (req, res) => {
     console.log('🔍 Driver location update request:', {
       userId: req.user._id,
       latitude,
-      longitude
+      longitude,
+      latitudeType: typeof latitude,
+      longitudeType: typeof longitude
     });
 
-    if (!latitude || !longitude) {
+    // Validate input
+    if (latitude === undefined || longitude === undefined || latitude === null || longitude === null) {
       return res.status(400).json({ error: 'Latitude and longitude are required' });
+    }
+
+    // Convert to numbers and validate
+    const lat = parseFloat(latitude);
+    const lng = parseFloat(longitude);
+
+    if (isNaN(lat) || isNaN(lng)) {
+      return res.status(400).json({ error: 'Latitude and longitude must be valid numbers' });
+    }
+
+    if (lat < -90 || lat > 90) {
+      return res.status(400).json({ error: 'Latitude must be between -90 and 90' });
+    }
+
+    if (lng < -180 || lng > 180) {
+      return res.status(400).json({ error: 'Longitude must be between -180 and 180' });
     }
 
     let driver = await Driver.findOne({ user: req.user._id });
@@ -254,7 +273,7 @@ router.post('/location', authenticateJWT, async (req, res) => {
         insuranceExpiry: new Date('2026-12-31'),
         currentLocation: {
           type: 'Point',
-          coordinates: [longitude, latitude]
+          coordinates: [lng, lat]
         },
         isOnline: true,
         isAvailable: true,
@@ -264,7 +283,8 @@ router.post('/location', authenticateJWT, async (req, res) => {
       const newDriver = await Driver.createDriverProfile(req.user._id, driverData);
       console.log('✅ Driver profile created:', newDriver._id);
       
-      await newDriver.updateLocation(latitude, longitude);
+      // Update location with validated coordinates
+      await newDriver.updateLocation(lat, lng);
       console.log('🔍 Driver location updated successfully:', newDriver.currentLocation);
       
       return res.json({
@@ -273,7 +293,8 @@ router.post('/location', authenticateJWT, async (req, res) => {
       });
     }
 
-    await driver.updateLocation(latitude, longitude);
+    // Update location with validated coordinates
+    await driver.updateLocation(lat, lng);
     console.log('🔍 Driver location updated successfully:', driver.currentLocation);
 
     res.json({
@@ -283,6 +304,9 @@ router.post('/location', authenticateJWT, async (req, res) => {
 
   } catch (error) {
     console.error('Error updating driver location:', error);
+    if (error.message.includes('must be numbers') || error.message.includes('between')) {
+      return res.status(400).json({ error: error.message });
+    }
     res.status(500).json({ error: 'Failed to update location' });
   }
 });
@@ -353,7 +377,7 @@ router.get('/check-registration', authenticateJWT, async (req, res) => {
   try {
     console.log('🔍 Checking driver registration for user:', req.user._id);
     
-    const driver = await Driver.findOne({ user: req.user._id });
+    let driver = await Driver.findOne({ user: req.user._id });
     console.log('🔍 Driver profile found:', !!driver);
     
     // Check if user is registered as a driver (either through Driver model or userType)
@@ -387,12 +411,21 @@ router.get('/check-registration', authenticateJWT, async (req, res) => {
           isApproved: true
         };
 
-        const newDriver = await Driver.createDriverProfile(req.user._id, driverData);
-        console.log('✅ Driver profile created:', newDriver._id);
-        driver = newDriver;
+        driver = await Driver.createDriverProfile(req.user._id, driverData);
+        console.log('✅ Driver profile created:', driver._id);
         isRegistered = true;
       } catch (error) {
         console.error('Error creating driver profile:', error);
+        // If profile creation fails, still return proper status
+        return res.json({
+          isRegistered: false,
+          isApproved: false,
+          isVerified: false,
+          isOnline: false,
+          hasDriverProfile: false,
+          driverProfile: null,
+          error: 'Failed to create driver profile'
+        });
       }
     }
 
@@ -405,10 +438,11 @@ router.get('/check-registration', authenticateJWT, async (req, res) => {
     });
     
     res.json({
-      isRegistered,
-      isApproved: driver ? driver.isApproved : isDriverUser, // If userType is driver, consider approved
-      isVerified: driver ? driver.isVerified : isDriverUser, // If userType is driver, consider verified
-      isOnline: driver ? driver.isOnline : false,
+      isRegistered: isRegistered,
+      isApproved: driver ? driver.isApproved : (isDriverUser ? true : false),
+      isVerified: driver ? driver.isVerified : (isDriverUser ? true : false),
+      isOnline: driver ? driver.isOnline : (isDriverUser ? true : false),
+      hasDriverProfile: !!driver,
       driverProfile: driver || (isDriverUser ? { userType: 'driver' } : null)
     });
 

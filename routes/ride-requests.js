@@ -307,8 +307,8 @@ async function findDriversWithinRadius(latitude, longitude, radiusKm) {
   // Get all online and available drivers from Driver model
   const drivers = await Driver.find({
     isOnline: true,
-    isAvailable: true
-    // Temporarily removed isApproved: true requirement for testing
+    isAvailable: true,
+    isApproved: true
   }).populate('user', 'firstName lastName phone rating');
 
   console.log('🔍 [findDriversWithinRadius] Total drivers found in DB:', drivers.length);
@@ -473,6 +473,15 @@ router.get('/available-simple', authenticateJWT, async (req, res) => {
     
     if (req.user.userType !== 'driver' && !driverProfile) {
       return res.status(403).json({ error: 'Only drivers can view available requests' });
+    }
+
+    // Ensure driver is online and available
+    if (driverProfile && (!driverProfile.isOnline || !driverProfile.isAvailable)) {
+      console.log('🔧 Driver is not online or available:', {
+        isOnline: driverProfile.isOnline,
+        isAvailable: driverProfile.isAvailable
+      });
+      return res.json([]);
     }
 
     // Find all available ride requests that haven't expired
