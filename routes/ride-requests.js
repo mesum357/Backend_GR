@@ -1110,4 +1110,42 @@ router.get('/debug-drivers', authenticateJWT, async (req, res) => {
   }
 });
 
+// Debug endpoint to get all ride requests
+router.get('/debug-all-requests', authenticateJWT, async (req, res) => {
+  try {
+    // Only allow in development
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(403).json({ error: 'Debug endpoint not available in production' });
+    }
+
+    const allRequests = await RideRequest.find({}).populate('rider', 'firstName lastName email phone').sort({ createdAt: -1 });
+    
+    res.json({
+      message: 'All ride requests debug information',
+      totalRequests: allRequests.length,
+      requests: allRequests.map(request => ({
+        id: request._id,
+        status: request.status,
+        pickupLocation: request.pickupLocation,
+        destination: request.destination,
+        fare: request.requestedPrice,
+        createdAt: request.createdAt,
+        riderName: request.rider ? `${request.rider.firstName} ${request.rider.lastName}` : 'No rider data',
+        riderEmail: request.rider?.email,
+        riderPhone: request.rider?.phone,
+        driversNotified: request.availableDrivers?.length || 0,
+        availableDrivers: request.availableDrivers?.map(ad => ({
+          driver: ad.driver,
+          distance: ad.distance,
+          estimatedTime: ad.estimatedTime,
+          viewedAt: ad.viewedAt
+        })) || []
+      }))
+    });
+  } catch (error) {
+    console.error('Error getting debug ride requests info:', error);
+    res.status(500).json({ error: 'Failed to get debug ride requests info' });
+  }
+});
+
 module.exports = router;
