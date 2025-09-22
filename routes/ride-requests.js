@@ -184,8 +184,21 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
 
     // Send ride request to each nearby driver via socket
     let driversNotified = 0;
+    console.log('🔧 [findDriversWithinRadius] Nearby drivers found:', nearbyDrivers.length);
+    
     for (const driver of nearbyDrivers) {
+      console.log('🔧 [findDriversWithinRadius] Processing driver:', {
+        driverId: driver._id,
+        userId: driver.user._id,
+        userName: driver.user ? `${driver.user.firstName} ${driver.user.lastName}` : 'No user data',
+        isOnline: driver.isOnline,
+        isAvailable: driver.isAvailable,
+        hasLocation: !!driver.currentLocation
+      });
+      
       const driverSocketId = req.app.get('driverConnections')?.get(driver.user._id.toString());
+      console.log('🔧 [findDriversWithinRadius] Driver socket ID:', driverSocketId);
+      
       if (driverSocketId) {
         console.log('🔧 Sending ride request to driver:', driver.user._id);
         io.to(driverSocketId).emit('ride_request', {
@@ -228,6 +241,23 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
         });
       } else {
         console.log('🔧 Driver not connected via WebSocket:', driver.user._id);
+        // Even if not connected via WebSocket, add to available drivers list
+        rideRequest.availableDrivers.push({
+          driver: driver.user._id,
+          distance: calculateHaversineDistance(
+            pickup.latitude,
+            pickup.longitude,
+            driver.currentLocation.coordinates[1],
+            driver.currentLocation.coordinates[0]
+          ),
+          estimatedTime: Math.round(calculateHaversineDistance(
+            pickup.latitude,
+            pickup.longitude,
+            driver.currentLocation.coordinates[1],
+            driver.currentLocation.coordinates[0]
+          ) * 2),
+          viewedAt: new Date()
+        });
       }
     }
     
@@ -1145,6 +1175,50 @@ router.get('/debug-all-requests', authenticateJWT, async (req, res) => {
   } catch (error) {
     console.error('Error getting debug ride requests info:', error);
     res.status(500).json({ error: 'Failed to get debug ride requests info' });
+  }
+});
+
+// Debug endpoint to test findDriversWithinRadius function
+router.get('/debug-find-drivers', authenticateJWT, async (req, res) => {
+  try {
+    // Only allow in development
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(403).json({ error: 'Debug endpoint not available in production' });
+    }
+
+    const { latitude = 35.911263, longitude = 74.3501778, radius = 5 } = req.query;
+    
+    console.log('🔍 [debug-find-drivers] Testing with params:', { latitude, longitude, radius });
+    
+    const nearbyDrivers = await findDriversWithinRadius(parseFloat(latitude), parseFloat(longitude), parseFloat(radius));
+    
+    res.json({
+      message: 'findDriversWithinRadius debug information',
+      searchParams: {
+        latitude: parseFloat(latitude),
+        longitude: parseFloat(longitude),
+        radius: parseFloat(radius)
+      },
+      nearbyDrivers: nearbyDrivers.map(driver => ({
+        id: driver._id,
+        userId: driver.user?._id,
+        userName: driver.user ? `${driver.user.firstName} ${driver.user.lastName}` : 'No user data',
+        isOnline: driver.isOnline,
+        isAvailable: driver.isAvailable,
+        isApproved: driver.isApproved,
+        hasLocation: !!driver.currentLocation,
+        coordinates: driver.currentLocation?.coordinates,
+        distance: driver.currentLocation ? calculateHaversineDistance(
+          parseFloat(latitude),
+          parseFloat(longitude),
+          driver.currentLocation.coordinates[1],
+          driver.currentLocation.coordinates[0]
+        ) : null
+      }))
+    });
+  } catch (error) {
+    console.error('Error testing findDriversWithinRadius:', error);
+    res.status(500).json({ error: 'Failed to test findDriversWithinRadius' });
   }
 });
 
