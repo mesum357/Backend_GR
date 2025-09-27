@@ -163,12 +163,6 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
     });
 
     await rideRequest.save();
-    console.log('🔧 Ride request saved to database:', {
-      id: rideRequest._id,
-      status: rideRequest.status,
-      expiresAt: rideRequest.expiresAt,
-      createdAt: rideRequest.createdAt
-    });
 
     // Find drivers within 1.2km radius using Haversine formula
     const nearbyDrivers = await findDriversWithinRadius(
@@ -176,31 +170,14 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
       pickup.longitude,
       radiusMeters / 1000 // Convert to km
     );
-    
-    console.log('🔧 Found nearby drivers:', nearbyDrivers.length);
 
     // Get socket.io instance
     const io = req.app.get('io');
 
     // Send ride request to each nearby driver via socket
-    let driversNotified = 0;
-    console.log('🔧 [findDriversWithinRadius] Nearby drivers found:', nearbyDrivers.length);
-    
     for (const driver of nearbyDrivers) {
-      console.log('🔧 [findDriversWithinRadius] Processing driver:', {
-        driverId: driver._id,
-        userId: driver.user._id,
-        userName: driver.user ? `${driver.user.firstName} ${driver.user.lastName}` : 'No user data',
-        isOnline: driver.isOnline,
-        isAvailable: driver.isAvailable,
-        hasLocation: !!driver.currentLocation
-      });
-      
-      const driverSocketId = req.app.get('driverConnections')?.get(driver.user._id.toString());
-      console.log('🔧 [findDriversWithinRadius] Driver socket ID:', driverSocketId);
-      
+      const driverSocketId = req.app.get('driverConnections')?.get(driver._id.toString());
       if (driverSocketId) {
-        console.log('🔧 Sending ride request to driver:', driver.user._id);
         io.to(driverSocketId).emit('ride_request', {
           rideRequestId: rideRequest._id,
           rider: {
@@ -220,30 +197,10 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
           expiresAt: rideRequest.expiresAt,
           createdAt: rideRequest.createdAt
         });
-        driversNotified++;
 
         // Add driver to available drivers list
         rideRequest.availableDrivers.push({
-          driver: driver.user._id,
-          distance: calculateHaversineDistance(
-            pickup.latitude,
-            pickup.longitude,
-            driver.currentLocation.coordinates[1],
-            driver.currentLocation.coordinates[0]
-          ),
-          estimatedTime: Math.round(calculateHaversineDistance(
-            pickup.latitude,
-            pickup.longitude,
-            driver.currentLocation.coordinates[1],
-            driver.currentLocation.coordinates[0]
-          ) * 2),
-          viewedAt: new Date()
-        });
-      } else {
-        console.log('🔧 Driver not connected via WebSocket:', driver.user._id);
-        // Even if not connected via WebSocket, add to available drivers list
-        rideRequest.availableDrivers.push({
-          driver: driver.user._id,
+          driver: driver._id,
           distance: calculateHaversineDistance(
             pickup.latitude,
             pickup.longitude,
@@ -260,8 +217,6 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
         });
       }
     }
-    
-    console.log('🔧 Total drivers notified:', driversNotified);
 
     await rideRequest.save();
 
@@ -271,7 +226,7 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
         id: rideRequest._id,
         status: rideRequest.status,
         expiresAt: rideRequest.expiresAt,
-        driversNotified: driversNotified,
+        driversNotified: nearbyDrivers.length,
         distance: rideRequest.distance,
         estimatedDuration: rideRequest.estimatedDuration,
         offeredFare: rideRequest.requestedPrice
@@ -299,38 +254,18 @@ function calculateHaversineDistance(lat1, lon1, lat2, lon2) {
 
 // Helper function to find drivers within radius
 async function findDriversWithinRadius(latitude, longitude, radiusKm) {
-  const Driver = require('../models/Driver');
+  const User = require('../models/User');
   
-  console.log('🔍 [findDriversWithinRadius] Starting search...');
-  console.log('🔍 [findDriversWithinRadius] Search params:', { latitude, longitude, radiusKm });
-  
-  // Get all online and available drivers from Driver model
-  const drivers = await Driver.find({
+  // Get all online drivers
+  const drivers = await User.find({
+    userType: 'driver',
     isOnline: true,
-    isAvailable: true,
-    isApproved: true
-  }).populate('user', 'firstName lastName phone rating');
-
-  console.log('🔍 [findDriversWithinRadius] Total drivers found in DB:', drivers.length);
-  
-  // Debug each driver's status
-  drivers.forEach((driver, index) => {
-    console.log(`🔍 [findDriversWithinRadius] Driver ${index + 1}:`, {
-      id: driver._id,
-      userId: driver.user?._id,
-      isOnline: driver.isOnline,
-      isAvailable: driver.isAvailable,
-      isApproved: driver.isApproved,
-      hasLocation: !!driver.currentLocation,
-      coordinates: driver.currentLocation?.coordinates,
-      userName: driver.user ? `${driver.user.firstName} ${driver.user.lastName}` : 'No user data'
-    });
+    isAvailable: true
   });
 
   // Filter drivers within radius using Haversine formula
   const nearbyDrivers = drivers.filter(driver => {
     if (!driver.currentLocation || !driver.currentLocation.coordinates) {
-      console.log('🔍 [findDriversWithinRadius] Driver has no location:', driver._id);
       return false;
     }
     
@@ -341,13 +276,9 @@ async function findDriversWithinRadius(latitude, longitude, radiusKm) {
       driver.currentLocation.coordinates[0]  // longitude
     );
     
-    const isWithinRadius = distance <= radiusKm;
-    console.log(`🔍 [findDriversWithinRadius] Driver ${driver._id} distance: ${distance.toFixed(2)}km, within radius: ${isWithinRadius}`);
-    
-    return isWithinRadius;
+    return distance <= radiusKm;
   });
 
-  console.log('🔍 [findDriversWithinRadius] Final nearby drivers:', nearbyDrivers.length);
   return nearbyDrivers;
 }
 
@@ -467,48 +398,21 @@ router.get('/test-all', async (req, res) => {
 // Simple endpoint to get all available requests for drivers (without location filtering)
 router.get('/available-simple', authenticateJWT, async (req, res) => {
   try {
-    // Check if user is a driver (either by userType or has Driver profile)
-    const Driver = require('../models/Driver');
-    const driverProfile = await Driver.findOne({ user: req.user._id });
-    
-    if (req.user.userType !== 'driver' && !driverProfile) {
+    // Check if user is a driver
+    if (req.user.userType !== 'driver') {
       return res.status(403).json({ error: 'Only drivers can view available requests' });
     }
 
-    // Ensure driver is online and available
-    if (driverProfile && (!driverProfile.isOnline || !driverProfile.isAvailable)) {
-      console.log('🔧 Driver is not online or available:', {
-        isOnline: driverProfile.isOnline,
-        isAvailable: driverProfile.isAvailable
-      });
-      return res.json([]);
-    }
-
     // Find all available ride requests that haven't expired
-    const currentTime = new Date();
-    console.log('🔧 Current time:', currentTime.toISOString());
-    
     const rideRequests = await RideRequest.find({
       status: { $in: ['searching', 'pending'] },
-      expiresAt: { $gt: currentTime }
+      expiresAt: { $gt: new Date() }
     })
     .populate('rider', 'firstName lastName rating totalRides')
     .sort({ createdAt: -1 })
     .limit(20);
 
     console.log('🔧 Found ride requests:', rideRequests.length);
-    console.log('🔧 Driver userType:', req.user.userType);
-    console.log('🔧 Driver profile exists:', !!driverProfile);
-    console.log('🔧 Driver isOnline:', driverProfile?.isOnline);
-    console.log('🔧 Driver isAvailable:', driverProfile?.isAvailable);
-    
-    // Debug: Check all ride requests in database
-    const allRequests = await RideRequest.find({}).sort({ createdAt: -1 }).limit(5);
-    console.log('🔧 All recent ride requests in DB:', allRequests.length);
-    allRequests.forEach(req => {
-      console.log(`🔧 DB Request ${req._id}: status=${req.status}, expiresAt=${req.expiresAt}, createdAt=${req.createdAt}`);
-    });
-    
     rideRequests.forEach(request => {
       console.log(`🔧 Request ${request._id}: PKR ${request.requestedPrice} (suggested: ${request.suggestedPrice}) - Status: ${request.status}`);
     });
@@ -974,260 +878,6 @@ router.get('/:requestId/debug', authenticateJWT, async (req, res) => {
   } catch (error) {
     console.error('Error fetching ride request debug info:', error);
     res.status(500).json({ error: 'Failed to fetch ride request debug info' });
-  }
-});
-
-// Test endpoint to create sample ride requests (for development only)
-router.post('/create-test-request', authenticateJWT, async (req, res) => {
-  try {
-    // Only allow in development
-    if (process.env.NODE_ENV === 'production') {
-      return res.status(403).json({ error: 'Test endpoint not available in production' });
-    }
-
-    // Check if user is a rider
-    if (req.user.userType !== 'rider') {
-      return res.status(403).json({ error: 'Only riders can create test requests' });
-    }
-
-    // Create a test ride request
-    const testRequest = new RideRequest({
-      rider: req.user._id,
-      pickupLocation: {
-        latitude: 35.9208,
-        longitude: 74.3144,
-        address: 'Gilgit City Center'
-      },
-      destination: {
-        latitude: 35.9308,
-        longitude: 74.3244,
-        address: 'Gilgit Airport'
-      },
-      distance: 1.2,
-      estimatedDuration: 5,
-      requestedPrice: 150,
-      suggestedPrice: 150,
-      notes: 'Test ride request',
-      vehicleType: 'car',
-      paymentMethod: 'cash',
-      requestRadius: 5,
-      expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes
-      status: 'searching'
-    });
-
-    await testRequest.save();
-    console.log('🔧 Test ride request created:', {
-      id: testRequest._id,
-      status: testRequest.status,
-      expiresAt: testRequest.expiresAt
-    });
-
-    res.status(201).json({
-      message: 'Test ride request created successfully',
-      rideRequest: {
-        id: testRequest._id,
-        status: testRequest.status,
-        expiresAt: testRequest.expiresAt
-      }
-    });
-
-  } catch (error) {
-    console.error('Error creating test ride request:', error);
-    res.status(500).json({ error: 'Failed to create test ride request' });
-  }
-});
-
-// Test endpoint to check available ride requests (for development only)
-router.get('/test-available', authenticateJWT, async (req, res) => {
-  try {
-    // Only allow in development
-    if (process.env.NODE_ENV === 'production') {
-      return res.status(403).json({ error: 'Test endpoint not available in production' });
-    }
-
-    // Check if user is a driver
-    if (req.user.userType !== 'driver') {
-      return res.status(403).json({ error: 'Only drivers can test available requests' });
-    }
-
-    const currentTime = new Date();
-    console.log('🔧 Test - Current time:', currentTime.toISOString());
-    
-    // Find all ride requests
-    const allRequests = await RideRequest.find({}).sort({ createdAt: -1 }).limit(10);
-    console.log('🔧 Test - All ride requests:', allRequests.length);
-    
-    // Find available ride requests
-    const availableRequests = await RideRequest.find({
-      status: { $in: ['searching', 'pending'] },
-      expiresAt: { $gt: currentTime }
-    }).sort({ createdAt: -1 }).limit(10);
-    
-    console.log('🔧 Test - Available ride requests:', availableRequests.length);
-    
-    res.json({
-      message: 'Test results',
-      currentTime: currentTime.toISOString(),
-      allRequests: allRequests.map(req => ({
-        id: req._id,
-        status: req.status,
-        expiresAt: req.expiresAt,
-        createdAt: req.createdAt
-      })),
-      availableRequests: availableRequests.map(req => ({
-        id: req._id,
-        status: req.status,
-        expiresAt: req.expiresAt,
-        createdAt: req.createdAt
-      }))
-    });
-
-  } catch (error) {
-    console.error('Error testing available requests:', error);
-    res.status(500).json({ error: 'Failed to test available requests' });
-  }
-});
-
-// Debug endpoint to check driver status
-router.get('/debug-drivers', authenticateJWT, async (req, res) => {
-  try {
-    // Only allow in development
-    if (process.env.NODE_ENV === 'production') {
-      return res.status(403).json({ error: 'Debug endpoint not available in production' });
-    }
-
-    const Driver = require('../models/Driver');
-    
-    // Get all drivers
-    const allDrivers = await Driver.find({}).populate('user', 'firstName lastName email');
-    
-    // Get online drivers
-    const onlineDrivers = await Driver.find({
-      isOnline: true
-    }).populate('user', 'firstName lastName email');
-    
-    // Get available drivers
-    const availableDrivers = await Driver.find({
-      isOnline: true,
-      isAvailable: true
-    }).populate('user', 'firstName lastName email');
-    
-    // Get approved drivers
-    const approvedDrivers = await Driver.find({
-      isApproved: true
-    }).populate('user', 'firstName lastName email');
-    
-    // Get drivers with location
-    const driversWithLocation = await Driver.find({
-      currentLocation: { $exists: true, $ne: null }
-    }).populate('user', 'firstName lastName email');
-    
-    res.json({
-      message: 'Driver debug information',
-      totalDrivers: allDrivers.length,
-      onlineDrivers: onlineDrivers.length,
-      availableDrivers: availableDrivers.length,
-      approvedDrivers: approvedDrivers.length,
-      driversWithLocation: driversWithLocation.length,
-      allDrivers: allDrivers.map(driver => ({
-        id: driver._id,
-        userId: driver.user?._id,
-        userName: driver.user ? `${driver.user.firstName} ${driver.user.lastName}` : 'No user',
-        isOnline: driver.isOnline,
-        isAvailable: driver.isAvailable,
-        isApproved: driver.isApproved,
-        isVerified: driver.isVerified,
-        hasLocation: !!driver.currentLocation,
-        coordinates: driver.currentLocation?.coordinates,
-        lastActive: driver.lastActive
-      }))
-    });
-
-  } catch (error) {
-    console.error('Error debugging drivers:', error);
-    res.status(500).json({ error: 'Failed to debug drivers' });
-  }
-});
-
-// Debug endpoint to get all ride requests
-router.get('/debug-all-requests', authenticateJWT, async (req, res) => {
-  try {
-    // Only allow in development
-    if (process.env.NODE_ENV === 'production') {
-      return res.status(403).json({ error: 'Debug endpoint not available in production' });
-    }
-
-    const allRequests = await RideRequest.find({}).populate('rider', 'firstName lastName email phone').sort({ createdAt: -1 });
-    
-    res.json({
-      message: 'All ride requests debug information',
-      totalRequests: allRequests.length,
-      requests: allRequests.map(request => ({
-        id: request._id,
-        status: request.status,
-        pickupLocation: request.pickupLocation,
-        destination: request.destination,
-        fare: request.requestedPrice,
-        createdAt: request.createdAt,
-        riderName: request.rider ? `${request.rider.firstName} ${request.rider.lastName}` : 'No rider data',
-        riderEmail: request.rider?.email,
-        riderPhone: request.rider?.phone,
-        driversNotified: request.availableDrivers?.length || 0,
-        availableDrivers: request.availableDrivers?.map(ad => ({
-          driver: ad.driver,
-          distance: ad.distance,
-          estimatedTime: ad.estimatedTime,
-          viewedAt: ad.viewedAt
-        })) || []
-      }))
-    });
-  } catch (error) {
-    console.error('Error getting debug ride requests info:', error);
-    res.status(500).json({ error: 'Failed to get debug ride requests info' });
-  }
-});
-
-// Debug endpoint to test findDriversWithinRadius function
-router.get('/debug-find-drivers', authenticateJWT, async (req, res) => {
-  try {
-    // Only allow in development
-    if (process.env.NODE_ENV === 'production') {
-      return res.status(403).json({ error: 'Debug endpoint not available in production' });
-    }
-
-    const { latitude = 35.911263, longitude = 74.3501778, radius = 5 } = req.query;
-    
-    console.log('🔍 [debug-find-drivers] Testing with params:', { latitude, longitude, radius });
-    
-    const nearbyDrivers = await findDriversWithinRadius(parseFloat(latitude), parseFloat(longitude), parseFloat(radius));
-    
-    res.json({
-      message: 'findDriversWithinRadius debug information',
-      searchParams: {
-        latitude: parseFloat(latitude),
-        longitude: parseFloat(longitude),
-        radius: parseFloat(radius)
-      },
-      nearbyDrivers: nearbyDrivers.map(driver => ({
-        id: driver._id,
-        userId: driver.user?._id,
-        userName: driver.user ? `${driver.user.firstName} ${driver.user.lastName}` : 'No user data',
-        isOnline: driver.isOnline,
-        isAvailable: driver.isAvailable,
-        isApproved: driver.isApproved,
-        hasLocation: !!driver.currentLocation,
-        coordinates: driver.currentLocation?.coordinates,
-        distance: driver.currentLocation ? calculateHaversineDistance(
-          parseFloat(latitude),
-          parseFloat(longitude),
-          driver.currentLocation.coordinates[1],
-          driver.currentLocation.coordinates[0]
-        ) : null
-      }))
-    });
-  } catch (error) {
-    console.error('Error testing findDriversWithinRadius:', error);
-    res.status(500).json({ error: 'Failed to test findDriversWithinRadius' });
   }
 });
 

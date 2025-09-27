@@ -1,0 +1,12 @@
+{
+  "ip": "192.168.0.222",
+  "port": 8080,
+  "url": "http://192.168.0.222:8080",
+  "timestamp": "2025-09-24T12:18:58.985Z",
+  "instructions": [
+    "1. Make sure your mobile device is on the same WiFi network",
+    "2. The backend server is running on all interfaces (0.0.0.0:8080)",
+    "3. The frontend has been configured to use this IP address",
+    "4. If the IP changes, run this script again to update the frontend"
+  ]
+}

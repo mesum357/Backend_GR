@@ -3,20 +3,6 @@ const User = require('../models/User');
 const { authenticateJWT } = require('../middleware/auth');
 const router = express.Router();
 
-// Get current user profile
-router.get('/profile', authenticateJWT, async (req, res) => {
-  try {
-    const user = await User.findById(req.user._id).select('-password');
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    res.json({ user: user.getPublicProfile() });
-  } catch (error) {
-    console.error('Get user profile error:', error);
-    res.status(500).json({ error: 'Failed to get user profile' });
-  }
-});
-
 // Get all users (admin only)
 router.get('/', authenticateJWT, async (req, res) => {
   try {
