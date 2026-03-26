@@ -337,11 +337,21 @@ io.on('connection', (socket) => {
         socket.emit('error', { message: 'Not authorized to cancel this ride request' });
         return;
       }
+      if (userType === 'driver' && rideRequest.acceptedBy && rideRequest.acceptedBy.toString() !== userId) {
+        socket.emit('error', { message: 'Not authorized to cancel this ride request' });
+        return;
+      }
 
       // Update status to cancelled
       rideRequest.status = 'cancelled';
       rideRequest.cancelledAt = new Date();
       await rideRequest.save();
+
+      // Notify rider (important so rider overlay closes in realtime)
+      const riderSocketId = activeConnections.get(rideRequest.rider.toString());
+      if (riderSocketId) {
+        io.to(riderSocketId).emit('ride_cancelled', { rideRequestId });
+      }
 
       // Notify accepted driver if any
       if (rideRequest.acceptedBy) {
@@ -562,6 +572,62 @@ io.on('connection', (socket) => {
     } catch (err) {
       console.error('Error handling rider_arrived:', err);
       socket.emit('error', { message: 'Failed to notify driver' });
+    }
+  });
+
+  // Real-time chat between rider and assigned driver (no persistence)
+  socket.on('ride_chat_message', async (data) => {
+    try {
+      const { rideRequestId, senderId, senderType, text, timestamp } = data || {};
+      if (!rideRequestId || !senderId || !senderType || typeof text !== 'string') {
+        socket.emit('error', { message: 'Invalid chat message payload' });
+        return;
+      }
+
+      const trimmed = text.trim();
+      if (!trimmed) return;
+
+      const RideRequest = require('./models/RideRequest');
+      const rideRequest = await RideRequest.findById(rideRequestId).select('rider acceptedBy status');
+      if (!rideRequest) {
+        socket.emit('error', { message: 'Ride request not found' });
+        return;
+      }
+
+      const riderId = (rideRequest.rider || '').toString();
+      const driverId = (rideRequest.acceptedBy || '').toString();
+      if (!riderId || !driverId) {
+        socket.emit('error', { message: 'Ride is not assigned yet' });
+        return;
+      }
+
+      const sender = senderId.toString();
+      if (sender !== riderId && sender !== driverId) {
+        socket.emit('error', { message: 'Not authorized to chat on this ride' });
+        return;
+      }
+
+      const recipientSocketId =
+        senderType === 'rider'
+          ? driverConnections.get(driverId)
+          : activeConnections.get(riderId);
+
+      const payload = {
+        rideRequestId,
+        senderId: sender,
+        senderType,
+        text: trimmed,
+        timestamp: typeof timestamp === 'number' ? timestamp : Date.now(),
+      };
+
+      // Echo to sender + forward to recipient (if connected)
+      socket.emit('ride_chat_message', payload);
+      if (recipientSocketId) {
+        io.to(recipientSocketId).emit('ride_chat_message', payload);
+      }
+    } catch (err) {
+      console.error('Error handling ride_chat_message:', err);
+      socket.emit('error', { message: 'Failed to send chat message' });
     }
   });
 
