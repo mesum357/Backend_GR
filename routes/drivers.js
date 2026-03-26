@@ -204,6 +204,27 @@ router.post('/location', authenticateJWT, async (req, res) => {
   }
 });
 
+// Get driver current location by driver profile id
+router.get('/current-location/:driverId', authenticateJWT, async (req, res) => {
+  try {
+    const { driverId } = req.params;
+    if (!driverId) return res.status(400).json({ error: 'driverId is required' });
+
+    // `driverId` might be either Driver profile _id or the linked User _id.
+    // Support both to keep frontend mapping simple.
+    let driver = await Driver.findById(driverId).select('currentLocation');
+    if (!driver) {
+      driver = await Driver.findOne({ user: driverId }).select('currentLocation');
+    }
+    if (!driver) return res.status(404).json({ error: 'Driver profile not found' });
+
+    return res.json({ location: driver.currentLocation });
+  } catch (error) {
+    console.error('Error fetching driver current location:', error);
+    return res.status(500).json({ error: 'Failed to fetch driver location' });
+  }
+});
+
 // Get driver statistics
 router.get('/stats', authenticateJWT, async (req, res) => {
   try {

@@ -130,9 +130,21 @@ driverSchema.methods.updateLocation = async function(latitude, longitude) {
     throw new Error('Longitude must be between -180 and 180');
   }
   
-  this.currentLocation.coordinates = [parseFloat(longitude), parseFloat(latitude)];
-  this.lastActive = new Date();
-  return await this.save();
+  // Use updateOne to avoid Mongoose version conflicts during frequent polling.
+  const coords = [parseFloat(longitude), parseFloat(latitude)];
+  const lastActive = new Date();
+
+  this.currentLocation.coordinates = coords;
+  this.lastActive = lastActive;
+
+  await this.updateOne({
+    $set: {
+      'currentLocation.coordinates': coords,
+      lastActive,
+    },
+  });
+
+  return this;
 };
 
 // Method to toggle online status

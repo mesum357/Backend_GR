@@ -390,8 +390,8 @@ io.on('connection', (socket) => {
         return;
       }
 
-      // Update offer status
-      latestOffer.status = action;
+      // Update offer status (schema expects 'accepted'/'rejected', not 'accept'/'decline')
+      latestOffer.status = action === 'accept' ? 'accepted' : 'rejected';
       latestOffer.respondedAt = new Date();
 
       if (action === 'accept') {
@@ -431,6 +431,40 @@ io.on('connection', (socket) => {
           action,
           message: `Fare offer ${action}ed successfully`
         });
+      }
+
+      // When rider accepts, emit driver_assigned with full driver info to rider
+      if (action === 'accept') {
+        try {
+          const Driver = require('./models/Driver');
+          const driver = await Driver.findById(latestOffer.driver).select(
+            'firstName lastName phone rating vehicleType vehicleModel vehicleColor vehiclePlateNumber currentLocation'
+          );
+          const driverId = latestOffer.driver.toString();
+          if (riderSocketId) {
+            io.to(riderSocketId).emit('driver_assigned', {
+              rideRequestId,
+              driver: {
+                _id: driverId,
+                id: driverId,
+                firstName: driver ? driver.firstName : 'Driver',
+                lastName: driver ? driver.lastName : '',
+                phone: driver ? driver.phone : '',
+                rating: driver ? (driver.rating || 4.5) : 4.5,
+                vehicleInfo: {
+                  make: driver ? (driver.vehicleType || 'Vehicle') : 'Vehicle',
+                  model: driver ? (driver.vehicleModel || '') : '',
+                  color: driver ? (driver.vehicleColor || '') : '',
+                  plateNumber: driver ? (driver.vehiclePlateNumber || '---') : '---'
+                },
+                currentLocation: driver ? driver.currentLocation : null
+              }
+            });
+            console.log(`🚗 driver_assigned emitted to rider ${riderId}`);
+          }
+        } catch (driverLookupErr) {
+          console.error('Error fetching driver for driver_assigned:', driverLookupErr);
+        }
       }
 
       socket.emit('fare_response_sent', { message: `Fare offer ${action}ed successfully` });
@@ -501,6 +535,85 @@ io.on('connection', (socket) => {
     } catch (error) {
       console.error('Error accepting counter offer:', error);
       socket.emit('error', { message: 'Failed to accept counter offer' });
+    }
+  });
+
+  // Handle rider confirming they are at pickup location
+  socket.on('rider_arrived', async (data) => {
+    try {
+      const { rideRequestId, riderId, latitude, longitude } = data;
+      const RideRequest = require('./models/RideRequest');
+      const rideRequest = await RideRequest.findById(rideRequestId);
+      if (!rideRequest) {
+        socket.emit('error', { message: 'Ride request not found' });
+        return;
+      }
+      // Notify the driver that rider is at pickup
+      const assignedDriverId = (rideRequest.acceptedBy || '').toString();
+      const driverSocketId = driverConnections.get(assignedDriverId);
+      if (driverSocketId) {
+        const payload = { rideRequestId, riderId };
+        if (typeof latitude === 'number' && typeof longitude === 'number') {
+          payload.riderLocation = { latitude, longitude };
+        }
+        io.to(driverSocketId).emit('rider_at_pickup', payload);
+        console.log(`📍 Rider ${riderId} confirmed at pickup, notifying driver ${assignedDriverId}`);
+      }
+    } catch (err) {
+      console.error('Error handling rider_arrived:', err);
+      socket.emit('error', { message: 'Failed to notify driver' });
+    }
+  });
+
+  // Handle driver starting the ride
+  socket.on('start_ride', async (data) => {
+    try {
+      const { rideRequestId, driverId } = data;
+      const RideRequest = require('./models/RideRequest');
+      const rideRequest = await RideRequest.findById(rideRequestId);
+      if (!rideRequest) {
+        socket.emit('error', { message: 'Ride request not found' });
+        return;
+      }
+      rideRequest.status = 'in_progress';
+      rideRequest.startedAt = new Date();
+      await rideRequest.save();
+      // Notify rider that ride has started
+      const riderSocketId = activeConnections.get(rideRequest.rider.toString());
+      if (riderSocketId) {
+        io.to(riderSocketId).emit('ride_started', { rideRequestId, driverId });
+        console.log(`🚗 Ride ${rideRequestId} started by driver ${driverId}`);
+      }
+      socket.emit('ride_started_ack', { rideRequestId });
+    } catch (err) {
+      console.error('Error handling start_ride:', err);
+      socket.emit('error', { message: 'Failed to start ride' });
+    }
+  });
+
+  // Handle driver ending the ride
+  socket.on('end_ride', async (data) => {
+    try {
+      const { rideRequestId, driverId } = data;
+      const RideRequest = require('./models/RideRequest');
+      const rideRequest = await RideRequest.findById(rideRequestId);
+      if (!rideRequest) {
+        socket.emit('error', { message: 'Ride request not found' });
+        return;
+      }
+      rideRequest.status = 'completed';
+      rideRequest.completedAt = new Date();
+      await rideRequest.save();
+      // Notify rider that ride is complete
+      const riderSocketId = activeConnections.get(rideRequest.rider.toString());
+      if (riderSocketId) {
+        io.to(riderSocketId).emit('ride_completed', { rideRequestId, driverId });
+      }
+      socket.emit('ride_completed', { rideRequestId });
+      console.log(`✅ Ride ${rideRequestId} completed by driver ${driverId}`);
+    } catch (err) {
+      console.error('Error handling end_ride:', err);
+      socket.emit('error', { message: 'Failed to end ride' });
     }
   });
 

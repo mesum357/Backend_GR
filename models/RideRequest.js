@@ -30,7 +30,18 @@ const rideRequestSchema = new mongoose.Schema({
   // Request status
   status: {
     type: String,
-    enum: ['searching', 'pending', 'accepted', 'rejected', 'expired', 'cancelled'],
+    // Keep this aligned with backend socket/route handlers (server.js uses
+    // 'in_progress' and 'completed' during the ride lifecycle).
+    enum: [
+      'searching',
+      'pending',
+      'accepted',
+      'rejected',
+      'expired',
+      'cancelled',
+      'in_progress',
+      'completed',
+    ],
     default: 'searching',
   },
   
@@ -70,10 +81,12 @@ const rideRequestSchema = new mongoose.Schema({
     vehicleInfo: { type: String, default: 'Standard Vehicle' },
     offeredAt: { type: Date, default: Date.now },
     respondedAt: { type: Date },
-    status: { 
-      type: String, 
-      enum: ['pending', 'accepted', 'rejected'], 
-      default: 'pending' 
+    status: {
+      type: String,
+      // server.js stores fare offer state as 'pending' and then maps accept/decline
+      // to 'accepted'/'rejected' for persistence.
+      enum: ['pending', 'accepted', 'rejected'],
+      default: 'pending',
     }
   }],
   

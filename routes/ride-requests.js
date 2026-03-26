@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const RideRequest = require('../models/RideRequest');
 const User = require('../models/User');
+const Driver = require('../models/Driver');
 const { authenticateJWT } = require('../middleware/auth');
 
 // Create a new ride request
@@ -78,7 +79,10 @@ router.post('/create', authenticateJWT, async (req, res) => {
 
   } catch (error) {
     console.error('Error creating ride request:', error);
-    res.status(500).json({ error: 'Failed to create ride request' });
+    res.status(500).json({
+      error: 'Failed to create ride request',
+      message: error instanceof Error ? error.message : String(error),
+    });
   }
 });
 
@@ -174,51 +178,82 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
     // Get socket.io instance
     const io = req.app.get('io');
 
-    // Send ride request to each nearby driver via socket
+    // Always add the driver to `availableDrivers` so they can accept even if
+    // their websocket is not currently connected.
+    //
+    // IMPORTANT race-condition fix:
+    // We must save `availableDrivers` *before* emitting `ride_request`,
+    // otherwise a fast driver might call `/respond` before the DB update lands.
+    let driversNotified = 0;
+    const emitSocketIds = [];
     for (const driver of nearbyDrivers) {
-      const driverSocketId = req.app.get('driverConnections')?.get(driver._id.toString());
-      if (driverSocketId) {
-        io.to(driverSocketId).emit('ride_request', {
-          rideRequestId: rideRequest._id,
-          rider: {
-            id: req.user._id,
-            firstName: req.user.firstName,
-            lastName: req.user.lastName,
-            rating: req.user.rating || 0
-          },
-          pickup: rideRequest.pickupLocation,
-          destination: rideRequest.destination,
-          distance: rideRequest.distance,
-          estimatedDuration: rideRequest.estimatedDuration,
-          offeredFare: rideRequest.requestedPrice,
-          vehicleType: rideRequest.vehicleType,
-          paymentMethod: rideRequest.paymentMethod,
-          notes: rideRequest.notes,
-          expiresAt: rideRequest.expiresAt,
-          createdAt: rideRequest.createdAt
+      // `driver.user` comes from `Driver.findNearbyDrivers()` which may be populated.
+      // `RideRequest.availableDrivers.driver` expects a `User` ObjectId, so we must
+      // always store `driver.user._id` (not the whole populated document).
+      const populatedUser = driver.user;
+      // `driver.user` might be populated (full User doc) or plain ObjectId.
+      // `availableDrivers.driver` expects a User ObjectId string.
+      const driverUserId = populatedUser && populatedUser._id
+        ? populatedUser._id.toString()
+        : (populatedUser ? populatedUser.toString() : null);
+      if (!driverUserId) {
+        console.warn('Skipping driver with missing user id', {
+          driverId: driver?._id?.toString?.(),
+          hasUser: !!driver?.user,
         });
+        continue;
+      }
+      const driverSocketId = req.app.get('driverConnections')?.get(driverUserId);
 
-        // Add driver to available drivers list
-        rideRequest.availableDrivers.push({
-          driver: driver._id,
-          distance: calculateHaversineDistance(
-            pickup.latitude,
-            pickup.longitude,
-            driver.currentLocation.coordinates[1],
-            driver.currentLocation.coordinates[0]
-          ),
-          estimatedTime: Math.round(calculateHaversineDistance(
-            pickup.latitude,
-            pickup.longitude,
-            driver.currentLocation.coordinates[1],
-            driver.currentLocation.coordinates[0]
-          ) * 2),
-          viewedAt: new Date()
-        });
+      rideRequest.availableDrivers.push({
+        driver: driverUserId,
+        distance: calculateHaversineDistance(
+          pickup.latitude,
+          pickup.longitude,
+          (driver.currentLocation || driver.location).coordinates[1],
+          (driver.currentLocation || driver.location).coordinates[0]
+        ),
+        estimatedTime: Math.round(calculateHaversineDistance(
+          pickup.latitude,
+          pickup.longitude,
+          (driver.currentLocation || driver.location).coordinates[1],
+          (driver.currentLocation || driver.location).coordinates[0]
+        ) * 2),
+        viewedAt: new Date()
+      });
+
+      if (driverSocketId) {
+        emitSocketIds.push(driverSocketId);
+        driversNotified += 1;
       }
     }
 
     await rideRequest.save();
+
+    const rideRequestPayload = {
+      rideRequestId: rideRequest._id,
+      rider: {
+        id: req.user._id,
+        firstName: req.user.firstName,
+        lastName: req.user.lastName,
+        rating: req.user.rating || 0
+      },
+      pickup: rideRequest.pickupLocation,
+      destination: rideRequest.destination,
+      distance: rideRequest.distance,
+      estimatedDuration: rideRequest.estimatedDuration,
+      offeredFare: rideRequest.requestedPrice,
+      vehicleType: rideRequest.vehicleType,
+      paymentMethod: rideRequest.paymentMethod,
+      notes: rideRequest.notes,
+      expiresAt: rideRequest.expiresAt,
+      createdAt: rideRequest.createdAt
+    };
+
+    // Emit after DB save to ensure `/respond` can find the driver in availableDrivers.
+    for (const socketId of emitSocketIds) {
+      io.to(socketId).emit('ride_request', rideRequestPayload);
+    }
 
     res.status(201).json({
       message: 'Ride request sent to nearby drivers',
@@ -226,7 +261,8 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
         id: rideRequest._id,
         status: rideRequest.status,
         expiresAt: rideRequest.expiresAt,
-        driversNotified: nearbyDrivers.length,
+        driversNotified,
+        driversFound: nearbyDrivers.length > 0,
         distance: rideRequest.distance,
         estimatedDuration: rideRequest.estimatedDuration,
         offeredFare: rideRequest.requestedPrice
@@ -235,7 +271,10 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
 
   } catch (error) {
     console.error('Error creating ride request:', error);
-    res.status(500).json({ error: 'Failed to create ride request' });
+    res.status(500).json({
+      error: 'Failed to create ride request',
+      message: error instanceof Error ? error.message : String(error),
+    });
   }
 });
 
@@ -252,34 +291,16 @@ function calculateHaversineDistance(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-// Helper function to find drivers within radius
 async function findDriversWithinRadius(latitude, longitude, radiusKm) {
-  const User = require('../models/User');
-  
-  // Get all online drivers
-  const drivers = await User.find({
-    userType: 'driver',
-    isOnline: true,
-    isAvailable: true
-  });
-
-  // Filter drivers within radius using Haversine formula
-  const nearbyDrivers = drivers.filter(driver => {
-    if (!driver.currentLocation || !driver.currentLocation.coordinates) {
-      return false;
-    }
-    
-    const distance = calculateHaversineDistance(
-      latitude,
-      longitude,
-      driver.currentLocation.coordinates[1], // latitude
-      driver.currentLocation.coordinates[0]  // longitude
-    );
-    
-    return distance <= radiusKm;
-  });
-
-  return nearbyDrivers;
+  try {
+    // Use the Driver model's static method for geospatial search
+    const nearbyDrivers = await Driver.findNearbyDrivers(latitude, longitude, radiusKm);
+    console.log(`🔍 Found ${nearbyDrivers.length} nearby drivers within ${radiusKm}km`);
+    return nearbyDrivers;
+  } catch (error) {
+    console.error('❌ Error finding nearby drivers:', error);
+    return [];
+  }
 }
 
 // Get ride request status
@@ -310,56 +331,6 @@ router.get('/:id/status', authenticateJWT, async (req, res) => {
   } catch (error) {
     console.error('Error fetching ride request status:', error);
     res.status(500).json({ error: 'Failed to fetch ride request status' });
-  }
-});
-
-// Driver respond to ride request
-router.post('/:id/respond', authenticateJWT, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { action, driverId, counterOffer } = req.body;
-    
-    const rideRequest = await RideRequest.findById(id);
-    
-    if (!rideRequest) {
-      return res.status(404).json({ error: 'Ride request not found' });
-    }
-    
-    // Check if user is a driver
-    if (req.user.userType !== 'driver') {
-      return res.status(403).json({ error: 'Only drivers can respond to ride requests' });
-    }
-    
-    if (action === 'accept') {
-      // Atomic assignment - only first accept wins
-      if (rideRequest.status === 'pending') {
-        rideRequest.status = 'accepted';
-        rideRequest.acceptedBy = driverId;
-        await rideRequest.save();
-        
-        res.json({ message: 'Ride request accepted successfully' });
-      } else {
-        res.status(400).json({ error: 'Ride request is no longer available' });
-      }
-    } else if (action === 'negotiate') {
-      // Handle counter offer
-      rideRequest.availableDrivers.forEach(availableDriver => {
-        if (availableDriver.driver.toString() === driverId) {
-          availableDriver.counterOffer = counterOffer;
-          availableDriver.status = 'counter_offered';
-          availableDriver.respondedAt = new Date();
-        }
-      });
-      
-      await rideRequest.save();
-      res.json({ message: 'Counter offer sent successfully' });
-    } else {
-      res.status(400).json({ error: 'Invalid action' });
-    }
-    
-  } catch (error) {
-    console.error('Error responding to ride request:', error);
-    res.status(500).json({ error: 'Failed to respond to ride request' });
   }
 });
 
@@ -566,7 +537,27 @@ router.get('/available', authenticateJWT, async (req, res) => {
 router.post('/:requestId/respond', authenticateJWT, async (req, res) => {
   try {
     const { requestId } = req.params;
-    const { action, counterOffer } = req.body; // action: 'accept', 'counter_offer', 'reject'
+    const { action, counterOffer } = req.body; // action: 'accept', 'counter_offer', 'reject' (+ aliases)
+
+    // Normalize action values coming from different frontend components.
+    // This prevents 400 "Invalid action" when the UI sends e.g. "negotiate".
+    const normalizedAction = (typeof action === 'string')
+      ? action.trim().toLowerCase()
+      : action;
+
+    let actionToUse = normalizedAction;
+    if (actionToUse === 'negotiate') actionToUse = 'counter_offer';
+    if (actionToUse === 'decline') actionToUse = 'reject';
+    if (actionToUse === 'accepted') actionToUse = 'accept';
+    if (actionToUse === 'counteroffer' || actionToUse === 'counter-offer') actionToUse = 'counter_offer';
+
+    console.log('🔧 Driver respond received:', {
+      requestId,
+      rawAction: action,
+      normalizedAction,
+      actionToUse,
+      counterOffer,
+    });
 
     // Check if user is a driver
     if (req.user.userType !== 'driver') {
@@ -597,7 +588,7 @@ router.post('/:requestId/respond', authenticateJWT, async (req, res) => {
 
     const driverResponse = rideRequest.availableDrivers[driverIndex];
 
-    switch (action) {
+    switch (actionToUse) {
       case 'accept':
         // Accept the ride request
         rideRequest.status = 'accepted';
@@ -855,6 +846,82 @@ router.post('/:requestId/cancel', authenticateJWT, async (req, res) => {
   } catch (error) {
     console.error('Error cancelling ride request:', error);
     res.status(500).json({ error: 'Failed to cancel ride request' });
+  }
+});
+
+// Rider starts searching for drivers (UI helper)
+router.post('/:requestId/start-searching', authenticateJWT, async (req, res) => {
+  try {
+    const { requestId } = req.params;
+    const rideRequest = await RideRequest.findById(requestId);
+    if (!rideRequest) return res.status(404).json({ error: 'Ride request not found' });
+
+    if (rideRequest.rider.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ error: 'Not authorized' });
+    }
+
+    // If ride is already accepted/in progress/completed, do nothing.
+    if (!['searching', 'pending'].includes(rideRequest.status)) {
+      return res.status(200).json({ message: 'Search already stopped', status: rideRequest.status });
+    }
+
+    rideRequest.status = 'searching';
+    await rideRequest.save();
+    return res.status(200).json({ message: 'Search started', status: rideRequest.status });
+  } catch (error) {
+    console.error('Error starting search:', error);
+    return res.status(500).json({ error: 'Failed to start searching' });
+  }
+});
+
+// Rider stops searching for drivers (UI helper)
+router.post('/:requestId/stop-searching', authenticateJWT, async (req, res) => {
+  try {
+    const { requestId } = req.params;
+    const rideRequest = await RideRequest.findById(requestId);
+    if (!rideRequest) return res.status(404).json({ error: 'Ride request not found' });
+
+    if (rideRequest.rider.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ error: 'Not authorized' });
+    }
+
+    // If ride was already accepted, don't treat this as an error.
+    if (!['searching', 'pending'].includes(rideRequest.status)) {
+      return res.status(200).json({ message: 'Search already stopped', status: rideRequest.status });
+    }
+
+    const oldStatus = rideRequest.status;
+    rideRequest.status = 'cancelled';
+    rideRequest.cancelledAt = new Date();
+    await rideRequest.save();
+
+    // Notify connected drivers that the ride request is cancelled.
+    const io = req.app.get('io');
+    if (io) {
+      const driverConnections = req.app.get('driverConnections');
+      if (driverConnections && driverConnections.size > 0) {
+        driverConnections.forEach((socketId, driverId) => {
+          try {
+            const cancellationData = {
+              rideRequestId: requestId,
+              riderId: req.user._id,
+              message: 'Ride request has been cancelled by the rider',
+              oldStatus,
+              newStatus: 'cancelled',
+              timestamp: new Date().toISOString(),
+            };
+            io.to(socketId).emit('ride_request_cancelled', cancellationData);
+          } catch (wsError) {
+            console.error('❌ Failed to send ride_request_cancelled:', wsError);
+          }
+        });
+      }
+    }
+
+    return res.status(200).json({ message: 'Stopped searching', newStatus: 'cancelled' });
+  } catch (error) {
+    console.error('Error stopping search:', error);
+    return res.status(500).json({ error: 'Failed to stop searching' });
   }
 });
 
