@@ -3,6 +3,7 @@ const Ride = require('../models/Ride');
 const User = require('../models/User');
 const { authenticateJWT, requireUserType } = require('../middleware/auth');
 const router = express.Router();
+const RideRequest = require('../models/RideRequest');
 
 // Book a new ride
 router.post('/book', authenticateJWT, requireUserType('rider'), async (req, res) => {
@@ -238,13 +239,71 @@ router.post('/:rideId/rate', authenticateJWT, async (req, res) => {
     const { rideId } = req.params;
     const { rating, comment } = req.body;
 
-    const ride = await Ride.findById(rideId);
+    if (typeof rating !== 'number' || !Number.isFinite(rating)) {
+      return res.status(400).json({ error: 'Rating must be a number' });
+    }
+    if (rating < 1 || rating > 5) {
+      return res.status(400).json({ error: 'Rating must be between 1 and 5' });
+    }
+
+    let ride = await Ride.findById(rideId);
+    // Fallback: if ride not found by ID, but there is a RideRequest with this ID,
+    // create a minimal Ride document so the rating flow never breaks.
+    if (!ride) {
+      const rideRequest = await RideRequest.findById(rideId);
+      if (rideRequest) {
+        const pickup = {
+          address: rideRequest.pickupLocation?.address || '',
+          location: {
+            type: 'Point',
+            coordinates: [
+              rideRequest.pickupLocation?.longitude || 0,
+              rideRequest.pickupLocation?.latitude || 0,
+            ],
+          },
+        };
+        const destination = {
+          address: rideRequest.destination?.address || rideRequest.destinationLocation?.address || '',
+          location: {
+            type: 'Point',
+            coordinates: [
+              rideRequest.destination?.longitude || rideRequest.destinationLocation?.longitude || 0,
+              rideRequest.destination?.latitude || rideRequest.destinationLocation?.latitude || 0,
+            ],
+          },
+        };
+
+        const distanceKm = rideRequest.distance || 0;
+        const durationMin = rideRequest.estimatedDuration || 0;
+        const amount = rideRequest.requestedPrice || rideRequest.suggestedPrice || 0;
+
+        ride = new Ride({
+          _id: rideRequest._id,
+          rider: rideRequest.rider,
+          driver: rideRequest.acceptedBy || null,
+          pickup,
+          destination,
+          distance: distanceKm,
+          duration: durationMin,
+          price: {
+            amount,
+            currency: 'PKR',
+            negotiated: true,
+          },
+          paymentMethod: rideRequest.paymentMethod || 'cash',
+          status: 'completed',
+          startTime: rideRequest.startedAt || new Date(),
+          endTime: rideRequest.completedAt || new Date(),
+        });
+        await ride.save();
+      }
+    }
     if (!ride) {
       return res.status(404).json({ error: 'Ride not found' });
     }
 
     // Check if user is the rider or driver
-    const isRider = ride.rider.toString() === req.user._id.toString();
+    const isRider = ride.rider && ride.rider.toString() === req.user._id.toString();
     const isDriver = ride.driver && ride.driver.toString() === req.user._id.toString();
 
     if (!isRider && !isDriver) {
@@ -255,34 +314,58 @@ router.post('/:rideId/rate', authenticateJWT, async (req, res) => {
       return res.status(400).json({ error: 'Can only rate completed rides' });
     }
 
-    // Update rating
+    // The user submitting the review rates the OTHER party:
+    // - Rider submits → rates driver (driverRating/driverComment)
+    // - Driver submits → rates rider (riderRating/riderComment)
+    let ratedUserId = null;
+    const trimmedComment =
+      typeof comment === 'string' && comment.trim().length > 0 ? comment.trim() : null;
+
     if (isRider) {
-      ride.rating.riderRating = rating;
-      ride.rating.riderComment = comment;
-    } else if (isDriver) {
+      if (!ride.driver) return res.status(400).json({ error: 'Driver missing for this ride' });
       ride.rating.driverRating = rating;
-      ride.rating.driverComment = comment;
+      ride.rating.driverComment = trimmedComment;
+      ratedUserId = ride.driver.toString();
+    } else if (isDriver) {
+      ride.rating.riderRating = rating;
+      ride.rating.riderComment = trimmedComment;
+      ratedUserId = ride.rider.toString();
     }
 
     await ride.save();
 
-    // Update user's average rating
-    const userRides = await Ride.find({
-      $or: [{ rider: req.user._id }, { driver: req.user._id }],
+    // Update the RATED user's average rating based on completed rides.
+    // Only include rides that already have a numeric rating.
+    const ratedUserRides = await Ride.find({
+      $or: [{ rider: ratedUserId }, { driver: ratedUserId }],
       status: 'completed'
     });
 
-    const totalRating = userRides.reduce((sum, r) => {
-      if (r.rider.toString() === req.user._id.toString()) {
-        return sum + (r.rating.riderRating || 0);
+    let sum = 0;
+    let count = 0;
+
+    for (const r of ratedUserRides) {
+      if (!r.rating) continue;
+      if (r.rider && r.rider.toString() === ratedUserId?.toString()) {
+        const val = r.rating.riderRating;
+        if (typeof val === 'number' && val >= 1 && val <= 5) {
+          sum += val;
+          count += 1;
+        }
       } else {
-        return sum + (r.rating.driverRating || 0);
+        const val = r.rating.driverRating;
+        if (typeof val === 'number' && val >= 1 && val <= 5) {
+          sum += val;
+          count += 1;
+        }
       }
-    }, 0);
+    }
 
-    const averageRating = userRides.length > 0 ? totalRating / userRides.length : 0;
+    const averageRating = count > 0 ? sum / count : 0;
 
-    await User.findByIdAndUpdate(req.user._id, { rating: averageRating });
+    if (ratedUserId) {
+      await User.findByIdAndUpdate(ratedUserId, { rating: averageRating });
+    }
 
     res.json({
       message: 'Rating submitted successfully',

@@ -171,7 +171,7 @@ io.on('connection', (socket) => {
               rideRequestId,
               driverId,
               driverName: driver ? `${driver.firstName} ${driver.lastName}` : 'Driver',
-              driverRating: driver ? driver.rating : 4.5,
+              driverRating: driver ? (driver.rating ?? 0) : 0,
               fareAmount: counterOffer || rideRequest.offeredFare,
               arrivalTime: arrivalTime,
               vehicleInfo: driver ? `${driver.vehicleType} ${driver.vehicleModel}` : 'Vehicle',
@@ -320,6 +320,58 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Driver viewed a ride request (real-time UX signal to rider)
+  socket.on('ride_request_viewed', async (data) => {
+    try {
+      const { rideRequestId, driverId } = data || {};
+      if (!rideRequestId || !driverId) return;
+
+      const RideRequest = require('./models/RideRequest');
+      const rideRequest = await RideRequest.findById(rideRequestId);
+      if (!rideRequest) return;
+
+      // Only send viewed updates while rider is still searching.
+      if (rideRequest.status !== 'searching' && rideRequest.status !== 'pending') return;
+
+      // Mark viewed in the availableDrivers array (dedupe by driverId).
+      let found = false;
+      if (Array.isArray(rideRequest.availableDrivers)) {
+        rideRequest.availableDrivers.forEach((d) => {
+          if (d?.driver?.toString?.() === driverId.toString()) {
+            d.status = 'viewed';
+            d.viewedAt = d.viewedAt || new Date();
+            found = true;
+          }
+        });
+      }
+
+      // If driver wasn't pre-listed (edge case), append a minimal entry.
+      if (!found) {
+        rideRequest.availableDrivers.push({
+          driver: driverId,
+          status: 'viewed',
+          viewedAt: new Date(),
+        });
+      }
+
+      await rideRequest.save();
+
+      const viewedCount = (rideRequest.availableDrivers || []).filter((d) => !!d?.viewedAt).length;
+
+      const riderSocketId = activeConnections.get(rideRequest.rider.toString());
+      if (riderSocketId) {
+        io.to(riderSocketId).emit('ride_request_viewed', {
+          rideRequestId,
+          viewedCount,
+          driverId,
+          timestamp: Date.now(),
+        });
+      }
+    } catch (e) {
+      console.error('Error handling ride_request_viewed:', e);
+    }
+  });
+
   // Handle rider-initiated ride cancellation and broadcast to drivers
   socket.on('ride_cancelled', async (data) => {
     try {
@@ -460,7 +512,7 @@ io.on('connection', (socket) => {
                 firstName: driver ? driver.firstName : 'Driver',
                 lastName: driver ? driver.lastName : '',
                 phone: driver ? driver.phone : '',
-                rating: driver ? (driver.rating || 4.5) : 4.5,
+                rating: driver ? (driver.rating ?? 0) : 0,
                 vehicleInfo: {
                   make: driver ? (driver.vehicleType || 'Vehicle') : 'Vehicle',
                   model: driver ? (driver.vehicleModel || '') : '',
@@ -828,6 +880,7 @@ io.on('connection', (socket) => {
     try {
       const { rideRequestId, driverId } = data;
       const RideRequest = require('./models/RideRequest');
+      const Ride = require('./models/Ride');
       const rideRequest = await RideRequest.findById(rideRequestId);
       if (!rideRequest) {
         socket.emit('error', { message: 'Ride request not found' });
@@ -836,6 +889,88 @@ io.on('connection', (socket) => {
       rideRequest.status = 'completed';
       rideRequest.completedAt = new Date();
       await rideRequest.save();
+
+      // Ensure a Ride document exists for the rating system.
+      // The app currently rates using POST `/api/rides/:rideId/rate`,
+      // while websocket lifecycle uses RideRequest documents.
+      // We bridge them by creating a Ride with `_id === rideRequestId`.
+      const existingRide = await Ride.findById(rideRequest._id).select('_id');
+      if (!existingRide) {
+        const pickup = {
+          address: rideRequest.pickupLocation?.address || '',
+          location: {
+            type: 'Point',
+            coordinates: [
+              rideRequest.pickupLocation?.longitude || 0,
+              rideRequest.pickupLocation?.latitude || 0,
+            ],
+          },
+        };
+
+        const destination = {
+          address: rideRequest.destination?.address || rideRequest.destinationLocation?.address || rideRequest.destination?.address || '',
+          location: {
+            type: 'Point',
+            coordinates: [
+              rideRequest.destination?.longitude || rideRequest.destinationLocation?.longitude || 0,
+              rideRequest.destination?.latitude || rideRequest.destinationLocation?.latitude || 0,
+            ],
+          },
+        };
+
+        // RideRequest schema uses `destination` and `pickupLocation` fields.
+        // (Some older code paths may use `destinationLocation`; keep compatibility.)
+        const effectiveDestination = {
+          address:
+            rideRequest.destination?.address ||
+            rideRequest.destinationLocation?.address ||
+            '',
+          latitude: rideRequest.destination?.latitude ?? rideRequest.destinationLocation?.latitude ?? 0,
+          longitude: rideRequest.destination?.longitude ?? rideRequest.destinationLocation?.longitude ?? 0,
+        };
+
+        const ride = new Ride({
+          _id: rideRequest._id,
+          rider: rideRequest.rider,
+          driver: driverId,
+          pickup: {
+            address: rideRequest.pickupLocation?.address || '',
+            location: {
+              type: 'Point',
+              coordinates: [
+                rideRequest.pickupLocation?.longitude || 0,
+                rideRequest.pickupLocation?.latitude || 0,
+              ],
+            },
+          },
+          destination: {
+            address: effectiveDestination.address || '',
+            location: {
+              type: 'Point',
+              coordinates: [effectiveDestination.longitude || 0, effectiveDestination.latitude || 0],
+            },
+          },
+          status: 'completed',
+          price: {
+            amount: rideRequest.requestedPrice || rideRequest.suggestedPrice || 0,
+            currency: 'PKR',
+            negotiated: true,
+          },
+          distance: rideRequest.distance || 0,
+          duration: rideRequest.estimatedDuration || 0,
+          paymentMethod: rideRequest.paymentMethod || 'cash',
+          rating: {
+            riderRating: null,
+            driverRating: null,
+            riderComment: null,
+            driverComment: null,
+          },
+          endTime: new Date(),
+        });
+
+        await ride.save();
+      }
+
       // Notify rider that ride is complete
       const riderSocketId = activeConnections.get(rideRequest.rider.toString());
       if (riderSocketId) {
