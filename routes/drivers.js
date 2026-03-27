@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 const Driver = require('../models/Driver');
 const User = require('../models/User');
 const { authenticateJWT } = require('../middleware/auth');
@@ -209,6 +210,10 @@ router.get('/current-location/:driverId', authenticateJWT, async (req, res) => {
   try {
     const { driverId } = req.params;
     if (!driverId) return res.status(400).json({ error: 'driverId is required' });
+    if (driverId === 'unknown') return res.status(400).json({ error: 'Invalid driverId' });
+    if (!mongoose.Types.ObjectId.isValid(driverId)) {
+      return res.status(400).json({ error: 'Invalid driverId format' });
+    }
 
     // `driverId` might be either Driver profile _id or the linked User _id.
     // Support both to keep frontend mapping simple.

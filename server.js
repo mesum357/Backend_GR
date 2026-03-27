@@ -631,6 +631,172 @@ io.on('connection', (socket) => {
     }
   });
 
+  // In-app call signaling between rider and assigned driver
+  socket.on('ride_call_request', async (data) => {
+    try {
+      const { rideRequestId, callerId, callerType, timestamp } = data || {};
+      if (!rideRequestId || !callerId || !callerType) return;
+      const RideRequest = require('./models/RideRequest');
+      const rideRequest = await RideRequest.findById(rideRequestId).select('rider acceptedBy');
+      if (!rideRequest) return;
+
+      const riderId = (rideRequest.rider || '').toString();
+      const driverId = (rideRequest.acceptedBy || '').toString();
+      if (!riderId || !driverId) return;
+
+      const recipientSocketId =
+        callerType === 'rider'
+          ? driverConnections.get(driverId)
+          : activeConnections.get(riderId);
+
+      const payload = {
+        rideRequestId,
+        callerId: callerId.toString(),
+        callerType,
+        timestamp: typeof timestamp === 'number' ? timestamp : Date.now(),
+      };
+
+      if (recipientSocketId) {
+        io.to(recipientSocketId).emit('ride_call_request', payload);
+      }
+      socket.emit('ride_call_request_ack', { rideRequestId, status: 'sent' });
+    } catch (err) {
+      console.error('Error handling ride_call_request:', err);
+      socket.emit('error', { message: 'Failed to start ride call' });
+    }
+  });
+
+  socket.on('ride_call_response', async (data) => {
+    try {
+      const { rideRequestId, responderId, responderType, action, timestamp } = data || {};
+      if (!rideRequestId || !responderId || !responderType || !action) return;
+      const RideRequest = require('./models/RideRequest');
+      const rideRequest = await RideRequest.findById(rideRequestId).select('rider acceptedBy');
+      if (!rideRequest) return;
+
+      const riderId = (rideRequest.rider || '').toString();
+      const driverId = (rideRequest.acceptedBy || '').toString();
+      const recipientSocketId =
+        responderType === 'rider'
+          ? driverConnections.get(driverId)
+          : activeConnections.get(riderId);
+
+      const payload = {
+        rideRequestId,
+        responderId: responderId.toString(),
+        responderType,
+        action, // accept | decline
+        timestamp: typeof timestamp === 'number' ? timestamp : Date.now(),
+      };
+
+      if (recipientSocketId) {
+        io.to(recipientSocketId).emit('ride_call_response', payload);
+      }
+      socket.emit('ride_call_response_ack', { rideRequestId, status: 'sent' });
+    } catch (err) {
+      console.error('Error handling ride_call_response:', err);
+      socket.emit('error', { message: 'Failed to send ride call response' });
+    }
+  });
+
+  socket.on('ride_call_end', async (data) => {
+    try {
+      const { rideRequestId, userId, userType, timestamp } = data || {};
+      if (!rideRequestId || !userId || !userType) return;
+      const RideRequest = require('./models/RideRequest');
+      const rideRequest = await RideRequest.findById(rideRequestId).select('rider acceptedBy');
+      if (!rideRequest) return;
+
+      const riderId = (rideRequest.rider || '').toString();
+      const driverId = (rideRequest.acceptedBy || '').toString();
+      const recipientSocketId =
+        userType === 'rider'
+          ? driverConnections.get(driverId)
+          : activeConnections.get(riderId);
+
+      const payload = {
+        rideRequestId,
+        userId: userId.toString(),
+        userType,
+        timestamp: typeof timestamp === 'number' ? timestamp : Date.now(),
+      };
+
+      if (recipientSocketId) {
+        io.to(recipientSocketId).emit('ride_call_ended', payload);
+      }
+      socket.emit('ride_call_ended', payload);
+    } catch (err) {
+      console.error('Error handling ride_call_end:', err);
+      socket.emit('error', { message: 'Failed to end ride call' });
+    }
+  });
+
+  // WebRTC offer relay
+  socket.on('ride_call_offer', async (data) => {
+    try {
+      const { rideRequestId, fromType, offer } = data || {};
+      if (!rideRequestId || !fromType || !offer) return;
+      const RideRequest = require('./models/RideRequest');
+      const rideRequest = await RideRequest.findById(rideRequestId).select('rider acceptedBy');
+      if (!rideRequest) return;
+      const riderId = (rideRequest.rider || '').toString();
+      const driverId = (rideRequest.acceptedBy || '').toString();
+      const recipientSocketId =
+        fromType === 'rider'
+          ? driverConnections.get(driverId)
+          : activeConnections.get(riderId);
+      if (recipientSocketId) {
+        io.to(recipientSocketId).emit('ride_call_offer', data);
+      }
+    } catch (err) {
+      console.error('Error handling ride_call_offer:', err);
+    }
+  });
+
+  // WebRTC answer relay
+  socket.on('ride_call_answer', async (data) => {
+    try {
+      const { rideRequestId, fromType, answer } = data || {};
+      if (!rideRequestId || !fromType || !answer) return;
+      const RideRequest = require('./models/RideRequest');
+      const rideRequest = await RideRequest.findById(rideRequestId).select('rider acceptedBy');
+      if (!rideRequest) return;
+      const riderId = (rideRequest.rider || '').toString();
+      const driverId = (rideRequest.acceptedBy || '').toString();
+      const recipientSocketId =
+        fromType === 'rider'
+          ? driverConnections.get(driverId)
+          : activeConnections.get(riderId);
+      if (recipientSocketId) {
+        io.to(recipientSocketId).emit('ride_call_answer', data);
+      }
+    } catch (err) {
+      console.error('Error handling ride_call_answer:', err);
+    }
+  });
+
+  // WebRTC ICE relay
+  socket.on('ride_call_ice_candidate', async (data) => {
+    try {
+      const { rideRequestId, fromType, candidate } = data || {};
+      if (!rideRequestId || !fromType || !candidate) return;
+      const RideRequest = require('./models/RideRequest');
+      const rideRequest = await RideRequest.findById(rideRequestId).select('rider acceptedBy');
+      if (!rideRequest) return;
+      const riderId = (rideRequest.rider || '').toString();
+      const driverId = (rideRequest.acceptedBy || '').toString();
+      const recipientSocketId =
+        fromType === 'rider'
+          ? driverConnections.get(driverId)
+          : activeConnections.get(riderId);
+      if (recipientSocketId) {
+        io.to(recipientSocketId).emit('ride_call_ice_candidate', data);
+      }
+    } catch (err) {
+      console.error('Error handling ride_call_ice_candidate:', err);
+    }
+  });
+
   // Handle driver starting the ride
   socket.on('start_ride', async (data) => {
     try {
