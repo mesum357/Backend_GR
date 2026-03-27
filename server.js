@@ -1,6 +1,9 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const helmet = require('helmet');
+const compression = require('compression');
+const rateLimit = require('express-rate-limit');
 const passport = require('passport');
 const session = require('express-session');
 const http = require('http');
@@ -16,13 +19,24 @@ const firebase = require('./config/firebase');
 const app = express();
 
 // Middleware
+app.set('trust proxy', 1);
+app.use(helmet());
+app.use(compression());
 app.use(cors({
   origin: true, // Allow all origins in development
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
-app.use(express.json());
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 240,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please slow down.' },
+});
+app.use('/api', apiLimiter);
+app.use(express.json({ limit: '256kb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // Session configuration (only for web clients, not React Native)
@@ -116,6 +130,28 @@ const io = socketIo(server, {
 // Store active connections
 const activeConnections = new Map(); // userId -> socketId
 const driverConnections = new Map(); // driverId -> socketId
+const processedEventIds = new Map(); // eventId -> processedAt
+const PROCESSED_EVENT_TTL_MS = 10 * 60 * 1000;
+
+const cleanupProcessedEventIds = () => {
+  const now = Date.now();
+  for (const [eventId, processedAt] of processedEventIds.entries()) {
+    if (now - processedAt > PROCESSED_EVENT_TTL_MS) {
+      processedEventIds.delete(eventId);
+    }
+  }
+};
+
+const isDuplicateEvent = (eventId) => {
+  if (!eventId) return false;
+  cleanupProcessedEventIds();
+  return processedEventIds.has(eventId);
+};
+
+const markEventProcessed = (eventId) => {
+  if (!eventId) return;
+  processedEventIds.set(eventId, Date.now());
+};
 
 // Socket.IO connection handling
 io.on('connection', (socket) => {
@@ -373,9 +409,13 @@ io.on('connection', (socket) => {
   });
 
   // Handle rider-initiated ride cancellation and broadcast to drivers
-  socket.on('ride_cancelled', async (data) => {
+  socket.on('ride_cancelled', async (data, ack) => {
     try {
-      const { rideRequestId, userId, userType } = data;
+      const { rideRequestId, userId, userType, eventId } = data;
+      if (isDuplicateEvent(eventId)) {
+        if (typeof ack === 'function') ack({ ok: true, duplicate: true, eventId });
+        return;
+      }
       const RideRequest = require('./models/RideRequest');
 
       const rideRequest = await RideRequest.findById(rideRequestId);
@@ -425,16 +465,23 @@ io.on('connection', (socket) => {
 
       // Acknowledge back to requester
       socket.emit('ride_cancelled_ack', { rideRequestId, status: 'ok' });
+      markEventProcessed(eventId);
+      if (typeof ack === 'function') ack({ ok: true, eventId });
     } catch (err) {
       console.error('Error handling ride_cancelled event:', err);
       socket.emit('error', { message: 'Failed to cancel ride request' });
+      if (typeof ack === 'function') ack({ ok: false, error: 'Failed to cancel ride request' });
     }
   });
 
   // Handle rider response to fare offer
-  socket.on('fare_response', async (data) => {
+  socket.on('fare_response', async (data, ack) => {
     try {
-      const { rideRequestId, riderId, action } = data;
+      const { rideRequestId, riderId, action, eventId } = data;
+      if (isDuplicateEvent(eventId)) {
+        if (typeof ack === 'function') ack({ ok: true, duplicate: true, eventId });
+        return;
+      }
       
       // Find the ride request
       const RideRequest = require('./models/RideRequest');
@@ -530,10 +577,13 @@ io.on('connection', (socket) => {
       }
 
       socket.emit('fare_response_sent', { message: `Fare offer ${action}ed successfully` });
+      markEventProcessed(eventId);
+      if (typeof ack === 'function') ack({ ok: true, eventId });
 
     } catch (error) {
       console.error('Error handling fare response:', error);
       socket.emit('error', { message: 'Failed to process fare response' });
+      if (typeof ack === 'function') ack({ ok: false, error: 'Failed to process fare response' });
     }
   });
 
@@ -601,9 +651,13 @@ io.on('connection', (socket) => {
   });
 
   // Handle rider confirming they are at pickup location
-  socket.on('rider_arrived', async (data) => {
+  socket.on('rider_arrived', async (data, ack) => {
     try {
-      const { rideRequestId, riderId, latitude, longitude } = data;
+      const { rideRequestId, riderId, latitude, longitude, eventId } = data;
+      if (isDuplicateEvent(eventId)) {
+        if (typeof ack === 'function') ack({ ok: true, duplicate: true, eventId });
+        return;
+      }
       const RideRequest = require('./models/RideRequest');
       const rideRequest = await RideRequest.findById(rideRequestId);
       if (!rideRequest) {
@@ -621,9 +675,12 @@ io.on('connection', (socket) => {
         io.to(driverSocketId).emit('rider_at_pickup', payload);
         console.log(`📍 Rider ${riderId} confirmed at pickup, notifying driver ${assignedDriverId}`);
       }
+      markEventProcessed(eventId);
+      if (typeof ack === 'function') ack({ ok: true, eventId });
     } catch (err) {
       console.error('Error handling rider_arrived:', err);
       socket.emit('error', { message: 'Failed to notify driver' });
+      if (typeof ack === 'function') ack({ ok: false, error: 'Failed to notify driver' });
     }
   });
 
@@ -684,9 +741,13 @@ io.on('connection', (socket) => {
   });
 
   // In-app call signaling between rider and assigned driver
-  socket.on('ride_call_request', async (data) => {
+  socket.on('ride_call_request', async (data, ack) => {
     try {
-      const { rideRequestId, callerId, callerType, timestamp } = data || {};
+      const { rideRequestId, callerId, callerType, timestamp, eventId } = data || {};
+      if (isDuplicateEvent(eventId)) {
+        if (typeof ack === 'function') ack({ ok: true, duplicate: true, eventId });
+        return;
+      }
       if (!rideRequestId || !callerId || !callerType) return;
       const RideRequest = require('./models/RideRequest');
       const rideRequest = await RideRequest.findById(rideRequestId).select('rider acceptedBy');
@@ -712,15 +773,22 @@ io.on('connection', (socket) => {
         io.to(recipientSocketId).emit('ride_call_request', payload);
       }
       socket.emit('ride_call_request_ack', { rideRequestId, status: 'sent' });
+      markEventProcessed(eventId);
+      if (typeof ack === 'function') ack({ ok: true, eventId });
     } catch (err) {
       console.error('Error handling ride_call_request:', err);
       socket.emit('error', { message: 'Failed to start ride call' });
+      if (typeof ack === 'function') ack({ ok: false, error: 'Failed to start ride call' });
     }
   });
 
-  socket.on('ride_call_response', async (data) => {
+  socket.on('ride_call_response', async (data, ack) => {
     try {
-      const { rideRequestId, responderId, responderType, action, timestamp } = data || {};
+      const { rideRequestId, responderId, responderType, action, timestamp, eventId } = data || {};
+      if (isDuplicateEvent(eventId)) {
+        if (typeof ack === 'function') ack({ ok: true, duplicate: true, eventId });
+        return;
+      }
       if (!rideRequestId || !responderId || !responderType || !action) return;
       const RideRequest = require('./models/RideRequest');
       const rideRequest = await RideRequest.findById(rideRequestId).select('rider acceptedBy');
@@ -745,15 +813,22 @@ io.on('connection', (socket) => {
         io.to(recipientSocketId).emit('ride_call_response', payload);
       }
       socket.emit('ride_call_response_ack', { rideRequestId, status: 'sent' });
+      markEventProcessed(eventId);
+      if (typeof ack === 'function') ack({ ok: true, eventId });
     } catch (err) {
       console.error('Error handling ride_call_response:', err);
       socket.emit('error', { message: 'Failed to send ride call response' });
+      if (typeof ack === 'function') ack({ ok: false, error: 'Failed to send ride call response' });
     }
   });
 
-  socket.on('ride_call_end', async (data) => {
+  socket.on('ride_call_end', async (data, ack) => {
     try {
-      const { rideRequestId, userId, userType, timestamp } = data || {};
+      const { rideRequestId, userId, userType, timestamp, eventId } = data || {};
+      if (isDuplicateEvent(eventId)) {
+        if (typeof ack === 'function') ack({ ok: true, duplicate: true, eventId });
+        return;
+      }
       if (!rideRequestId || !userId || !userType) return;
       const RideRequest = require('./models/RideRequest');
       const rideRequest = await RideRequest.findById(rideRequestId).select('rider acceptedBy');
@@ -777,9 +852,12 @@ io.on('connection', (socket) => {
         io.to(recipientSocketId).emit('ride_call_ended', payload);
       }
       socket.emit('ride_call_ended', payload);
+      markEventProcessed(eventId);
+      if (typeof ack === 'function') ack({ ok: true, eventId });
     } catch (err) {
       console.error('Error handling ride_call_end:', err);
       socket.emit('error', { message: 'Failed to end ride call' });
+      if (typeof ack === 'function') ack({ ok: false, error: 'Failed to end ride call' });
     }
   });
 
@@ -850,9 +928,13 @@ io.on('connection', (socket) => {
   });
 
   // Handle driver starting the ride
-  socket.on('start_ride', async (data) => {
+  socket.on('start_ride', async (data, ack) => {
     try {
-      const { rideRequestId, driverId } = data;
+      const { rideRequestId, driverId, eventId } = data;
+      if (isDuplicateEvent(eventId)) {
+        if (typeof ack === 'function') ack({ ok: true, duplicate: true, eventId });
+        return;
+      }
       const RideRequest = require('./models/RideRequest');
       const rideRequest = await RideRequest.findById(rideRequestId);
       if (!rideRequest) {
@@ -869,16 +951,23 @@ io.on('connection', (socket) => {
         console.log(`🚗 Ride ${rideRequestId} started by driver ${driverId}`);
       }
       socket.emit('ride_started_ack', { rideRequestId });
+      markEventProcessed(eventId);
+      if (typeof ack === 'function') ack({ ok: true, eventId });
     } catch (err) {
       console.error('Error handling start_ride:', err);
       socket.emit('error', { message: 'Failed to start ride' });
+      if (typeof ack === 'function') ack({ ok: false, error: 'Failed to start ride' });
     }
   });
 
   // Handle driver ending the ride
-  socket.on('end_ride', async (data) => {
+  socket.on('end_ride', async (data, ack) => {
     try {
-      const { rideRequestId, driverId } = data;
+      const { rideRequestId, driverId, eventId } = data;
+      if (isDuplicateEvent(eventId)) {
+        if (typeof ack === 'function') ack({ ok: true, duplicate: true, eventId });
+        return;
+      }
       const RideRequest = require('./models/RideRequest');
       const Ride = require('./models/Ride');
       const rideRequest = await RideRequest.findById(rideRequestId);
@@ -978,9 +1067,12 @@ io.on('connection', (socket) => {
       }
       socket.emit('ride_completed', { rideRequestId });
       console.log(`✅ Ride ${rideRequestId} completed by driver ${driverId}`);
+      markEventProcessed(eventId);
+      if (typeof ack === 'function') ack({ ok: true, eventId });
     } catch (err) {
       console.error('Error handling end_ride:', err);
       socket.emit('error', { message: 'Failed to end ride' });
+      if (typeof ack === 'function') ack({ ok: false, error: 'Failed to end ride' });
     }
   });
 
