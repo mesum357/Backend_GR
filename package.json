@@ -12,7 +12,9 @@
     "e2e:local": "node test-fresh-driver-local.js",
     "e2e:render": "node test-fresh-driver.js",
     "e2e:ride-reviews": "node run-e2e-ride-reviews-local.js",
-    "e2e:ride-reviews:remote": "node test-full-ride-e2e-with-reviews.js"
+    "e2e:ride-reviews:remote": "node test-full-ride-e2e-with-reviews.js",
+    "e2e:ride-cancel": "node run-e2e-ride-cancel-local.js",
+    "e2e:ride-cancel:remote": "node test-ride-cancellation-e2e.js"
   },
   "keywords": [
     "express",

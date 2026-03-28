@@ -430,7 +430,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Handle rider-initiated ride cancellation and broadcast to drivers
+  // Rider/driver ride cancellation — persist + fan-out via user rooms (fare offers + available + accepted)
   socket.on('ride_cancelled', async (data, ack) => {
     try {
       const { rideRequestId, userId, userType, eventId } = data;
@@ -446,14 +446,23 @@ io.on('connection', (socket) => {
         return;
       }
 
+      if (['cancelled', 'completed'].includes(rideRequest.status)) {
+        socket.emit('ride_cancelled_ack', { rideRequestId, status: 'ok', alreadyEnded: true });
+        markEventProcessed(eventId);
+        if (typeof ack === 'function') ack({ ok: true, eventId, alreadyEnded: true });
+        return;
+      }
+
       // Only allow rider or accepted driver to cancel for safety
       if (userType === 'rider' && rideRequest.rider.toString() !== userId) {
         socket.emit('error', { message: 'Not authorized to cancel this ride request' });
         return;
       }
-      if (userType === 'driver' && rideRequest.acceptedBy && rideRequest.acceptedBy.toString() !== userId) {
-        socket.emit('error', { message: 'Not authorized to cancel this ride request' });
-        return;
+      if (userType === 'driver') {
+        if (!rideRequest.acceptedBy || rideRequest.acceptedBy.toString() !== userId) {
+          socket.emit('error', { message: 'Not authorized to cancel this ride request' });
+          return;
+        }
       }
 
       // Update status to cancelled
@@ -461,25 +470,40 @@ io.on('connection', (socket) => {
       rideRequest.cancelledAt = new Date();
       await rideRequest.save();
 
-      // Notify rider (important so rider overlay closes in realtime)
-      emitToUser(io, rideRequest.rider, 'ride_cancelled', { rideRequestId });
+      const rid = String(rideRequestId);
+      const canceller = String(userId);
+      const riderUid = String(rideRequest.rider);
+      const payload = { rideRequestId: rid };
+      const payloadDetailed = {
+        rideRequestId: rid,
+        message: 'Ride request has been cancelled',
+        newStatus: 'cancelled',
+        timestamp: new Date().toISOString(),
+      };
 
-      // Notify accepted driver if any
-      if (rideRequest.acceptedBy) {
-        const acceptedDriverSocketId = driverConnections.get(rideRequest.acceptedBy.toString());
-        if (acceptedDriverSocketId) {
-          io.to(acceptedDriverSocketId).emit('ride_cancelled', { rideRequestId });
-        }
-      }
-
-      // Notify all available drivers who saw this request
+      const driverIds = new Set();
+      if (rideRequest.acceptedBy) driverIds.add(String(rideRequest.acceptedBy));
       if (Array.isArray(rideRequest.availableDrivers)) {
         rideRequest.availableDrivers.forEach((entry) => {
-          const driverSocketId = driverConnections.get((entry.driver || '').toString());
-          if (driverSocketId) {
-            io.to(driverSocketId).emit('ride_cancelled', { rideRequestId });
-          }
+          if (entry?.driver) driverIds.add(String(entry.driver));
         });
+      }
+      if (Array.isArray(rideRequest.fareOffers)) {
+        rideRequest.fareOffers.forEach((o) => {
+          if (o?.driver) driverIds.add(String(o.driver));
+        });
+      }
+
+      driverIds.forEach((driverId) => {
+        if (String(driverId) === canceller) return;
+        emitToUser(io, driverId, 'ride_request_cancelled', payloadDetailed);
+        emitToUser(io, driverId, 'ride_cancelled', payload);
+      });
+
+      // Echo to rider only if someone else cancelled (e.g. driver) so their tracking closes.
+      if (canceller !== riderUid) {
+        emitToUser(io, riderUid, 'ride_request_cancelled', payloadDetailed);
+        emitToUser(io, riderUid, 'ride_cancelled', payload);
       }
 
       // Acknowledge back to requester

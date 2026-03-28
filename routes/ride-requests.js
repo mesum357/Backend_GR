@@ -5,6 +5,65 @@ const User = require('../models/User');
 const Driver = require('../models/Driver');
 const { authenticateJWT } = require('../middleware/auth');
 
+/** Same delivery semantics as server.js emitToUser (user room + legacy socket id). */
+function emitToUserFromApp(req, userId, event, payload) {
+  const io = req.app.get('io');
+  if (!io) return;
+  const uid = userId != null ? String(userId) : '';
+  if (!uid) return;
+  const activeConnections = req.app.get('activeConnections');
+  const driverConnections = req.app.get('driverConnections');
+  io.to(`user:${uid}`).emit(event, payload);
+  const sid = activeConnections?.get(uid) || driverConnections?.get(uid);
+  if (sid) io.to(sid).emit(event, payload);
+}
+
+function collectRelevantDriverIds(rideRequest) {
+  const ids = new Set();
+  if (rideRequest.acceptedBy) ids.add(String(rideRequest.acceptedBy));
+  if (Array.isArray(rideRequest.availableDrivers)) {
+    rideRequest.availableDrivers.forEach((e) => {
+      if (e?.driver) ids.add(String(e.driver));
+    });
+  }
+  if (Array.isArray(rideRequest.fareOffers)) {
+    rideRequest.fareOffers.forEach((o) => {
+      if (o?.driver) ids.add(String(o.driver));
+    });
+  }
+  return [...ids];
+}
+
+/**
+ * Push cancellation to all parties that should react in real time.
+ * @param {string} cancelledByUserId - user who cancelled; rider is not echoed ride_cancelled (they already know from HTTP / local UI).
+ */
+function notifyRideCancellationRealtime(req, rideRequest, requestId, cancelledByUserId) {
+  const rid = String(requestId);
+  const riderId = String(rideRequest.rider);
+  const canceller = String(cancelledByUserId);
+  const payload = { rideRequestId: rid };
+  const payloadDetailed = {
+    rideRequestId: rid,
+    message: 'Ride request has been cancelled',
+    newStatus: 'cancelled',
+    timestamp: new Date().toISOString(),
+  };
+
+  const driverIds = collectRelevantDriverIds(rideRequest);
+  driverIds.forEach((driverId) => {
+    if (String(driverId) === String(cancelledByUserId)) return;
+    emitToUserFromApp(req, driverId, 'ride_request_cancelled', payloadDetailed);
+    emitToUserFromApp(req, driverId, 'ride_cancelled', payload);
+  });
+
+  // If the driver cancelled, tell the rider so tracking / overlays close.
+  if (canceller !== riderId) {
+    emitToUserFromApp(req, riderId, 'ride_request_cancelled', payloadDetailed);
+    emitToUserFromApp(req, riderId, 'ride_cancelled', payload);
+  }
+}
+
 // Create a new ride request
 router.post('/create', authenticateJWT, async (req, res) => {
   try {
@@ -748,7 +807,7 @@ router.post('/:requestId/accept-counter-offer', authenticateJWT, async (req, res
   }
 });
 
-// Cancel ride request
+// Cancel ride request (rider: searching/pending/accepted/in_progress; accepted driver: accepted/in_progress)
 router.post('/:requestId/cancel', authenticateJWT, async (req, res) => {
   try {
     const { requestId } = req.params;
@@ -758,12 +817,26 @@ router.post('/:requestId/cancel', authenticateJWT, async (req, res) => {
       return res.status(404).json({ error: 'Ride request not found' });
     }
 
-    if (rideRequest.rider.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ error: 'Not authorized to cancel this request' });
+    const uid = req.user._id.toString();
+    const isRider = rideRequest.rider.toString() === uid;
+    const isAcceptedDriver =
+      rideRequest.acceptedBy && rideRequest.acceptedBy.toString() === uid;
+
+    const cancellableStatuses = ['searching', 'pending', 'accepted', 'in_progress'];
+    if (!cancellableStatuses.includes(rideRequest.status)) {
+      return res.status(400).json({ error: 'Cannot cancel this ride at this stage' });
     }
 
-    if (!['searching', 'pending'].includes(rideRequest.status)) {
-      return res.status(400).json({ error: 'Cannot cancel non-active request' });
+    if (req.user.userType === 'rider') {
+      if (!isRider) {
+        return res.status(403).json({ error: 'Not authorized to cancel this request' });
+      }
+    } else if (req.user.userType === 'driver') {
+      if (!isAcceptedDriver) {
+        return res.status(403).json({ error: 'Not authorized to cancel this request' });
+      }
+    } else {
+      return res.status(403).json({ error: 'Not authorized to cancel this request' });
     }
 
     const oldStatus = rideRequest.status;
@@ -771,46 +844,12 @@ router.post('/:requestId/cancel', authenticateJWT, async (req, res) => {
     rideRequest.cancelledAt = new Date();
     await rideRequest.save();
 
-    console.log(`🚫 Ride request ${requestId} cancelled by rider ${req.user._id} - Status changed from ${oldStatus} to cancelled`);
-    
-    // Emit WebSocket event to notify all drivers about the cancellation
-    const io = req.app.get('io');
-    if (io) {
-      // Get all connected drivers
-      const driverConnections = req.app.get('driverConnections');
-      
-      console.log(`🔍 Driver connections available: ${driverConnections ? driverConnections.size : 0}`);
-      
-      if (driverConnections && driverConnections.size > 0) {
-        // Emit to all connected drivers
-        driverConnections.forEach((socketId, driverId) => {
-          try {
-            const cancellationData = {
-              rideRequestId: requestId,
-              riderId: req.user._id,
-              message: 'Ride request has been cancelled by the rider',
-              oldStatus,
-              newStatus: 'cancelled',
-              timestamp: new Date().toISOString()
-            };
-            
-            io.to(socketId).emit('ride_request_cancelled', cancellationData);
-            console.log(`📡 WebSocket notification sent to driver ${driverId} (${socketId}): Ride request ${requestId} cancelled`);
-            console.log(`📡 Cancellation data:`, cancellationData);
-          } catch (wsError) {
-            console.error(`❌ Failed to send WebSocket notification to driver ${driverId}:`, wsError);
-          }
-        });
-        
-        console.log(`📡 WebSocket notification sent to ${driverConnections.size} drivers: Ride request ${requestId} cancelled`);
-      } else {
-        console.log('⚠️ No connected drivers to notify about cancellation');
-      }
-    } else {
-      console.error('❌ WebSocket server not available for cancellation notification');
-    }
-    
-    // Verify the status was actually saved
+    console.log(
+      `🚫 Ride request ${requestId} cancelled by ${uid} (${req.user.userType}) — ${oldStatus} → cancelled`
+    );
+
+    notifyRideCancellationRealtime(req, rideRequest, requestId, uid);
+
     const verifyRequest = await RideRequest.findById(requestId);
     console.log(`🔍 Verification - Ride request ${requestId} status after save: ${verifyRequest.status}`);
 
@@ -867,33 +906,11 @@ router.post('/:requestId/stop-searching', authenticateJWT, async (req, res) => {
       return res.status(200).json({ message: 'Search already stopped', status: rideRequest.status });
     }
 
-    const oldStatus = rideRequest.status;
     rideRequest.status = 'cancelled';
     rideRequest.cancelledAt = new Date();
     await rideRequest.save();
 
-    // Notify connected drivers that the ride request is cancelled.
-    const io = req.app.get('io');
-    if (io) {
-      const driverConnections = req.app.get('driverConnections');
-      if (driverConnections && driverConnections.size > 0) {
-        driverConnections.forEach((socketId, driverId) => {
-          try {
-            const cancellationData = {
-              rideRequestId: requestId,
-              riderId: req.user._id,
-              message: 'Ride request has been cancelled by the rider',
-              oldStatus,
-              newStatus: 'cancelled',
-              timestamp: new Date().toISOString(),
-            };
-            io.to(socketId).emit('ride_request_cancelled', cancellationData);
-          } catch (wsError) {
-            console.error('❌ Failed to send ride_request_cancelled:', wsError);
-          }
-        });
-      }
-    }
+    notifyRideCancellationRealtime(req, rideRequest, requestId, req.user._id.toString());
 
     return res.status(200).json({ message: 'Stopped searching', newStatus: 'cancelled' });
   } catch (error) {
