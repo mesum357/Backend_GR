@@ -24,6 +24,7 @@
   "license": "ISC",
   "description": "Backend API for Tourist Ride-Sharing App",
   "dependencies": {
+    "@socket.io/redis-adapter": "^8.3.0",
     "bcryptjs": "^2.4.3",
     "compression": "^1.8.1",
     "cors": "^2.8.5",
@@ -40,6 +41,7 @@
     "passport": "^0.6.0",
     "passport-jwt": "^4.0.1",
     "passport-local": "^1.0.0",
+    "redis": "^5.11.0",
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1"
   },

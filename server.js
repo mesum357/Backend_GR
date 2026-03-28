@@ -159,8 +159,11 @@ const userSocketRoom = (userId) => {
   return s ? `user:${s}` : null;
 };
 const emitToUser = (io, userId, event, payload) => {
-  const room = userSocketRoom(userId);
-  if (room) io.to(room).emit(event, payload);
+  const uid = userId != null ? String(userId) : '';
+  if (!uid) return;
+  io.to(`user:${uid}`).emit(event, payload);
+  const sid = activeConnections.get(uid) || driverConnections.get(uid);
+  if (sid) io.to(sid).emit(event, payload);
 };
 
 // Socket.IO connection handling
@@ -968,91 +971,83 @@ io.on('connection', (socket) => {
       rideRequest.completedAt = new Date();
       await rideRequest.save();
 
+      const effectiveDriverId = rideRequest.acceptedBy
+        ? String(rideRequest.acceptedBy)
+        : String(driverId || '');
+
+      const riderUid =
+        rideRequest.rider && rideRequest.rider._id != null
+          ? rideRequest.rider._id
+          : rideRequest.rider;
+      const completionPayload = { rideRequestId, driverId: effectiveDriverId || driverId };
+
+      // Emit FIRST so clients always get notified even if Ride bridge fails later.
+      emitToUser(io, riderUid, 'ride_completed', completionPayload);
+      if (effectiveDriverId) emitToUser(io, effectiveDriverId, 'ride_completed', completionPayload);
+      socket.emit('ride_completed', { rideRequestId });
+
       // Ensure a Ride document exists for the rating system.
       // The app currently rates using POST `/api/rides/:rideId/rate`,
       // while websocket lifecycle uses RideRequest documents.
       // We bridge them by creating a Ride with `_id === rideRequestId`.
-      const existingRide = await Ride.findById(rideRequest._id).select('_id');
-      if (!existingRide) {
-        const pickup = {
-          address: rideRequest.pickupLocation?.address || '',
-          location: {
-            type: 'Point',
-            coordinates: [
-              rideRequest.pickupLocation?.longitude || 0,
-              rideRequest.pickupLocation?.latitude || 0,
-            ],
-          },
-        };
+      try {
+        const existingRide = await Ride.findById(rideRequest._id).select('_id');
+        if (!existingRide) {
+          const effectiveDestination = {
+            address:
+              rideRequest.destination?.address ||
+              rideRequest.destinationLocation?.address ||
+              '',
+            latitude: rideRequest.destination?.latitude ?? rideRequest.destinationLocation?.latitude ?? 0,
+            longitude: rideRequest.destination?.longitude ?? rideRequest.destinationLocation?.longitude ?? 0,
+          };
 
-        const destination = {
-          address: rideRequest.destination?.address || rideRequest.destinationLocation?.address || rideRequest.destination?.address || '',
-          location: {
-            type: 'Point',
-            coordinates: [
-              rideRequest.destination?.longitude || rideRequest.destinationLocation?.longitude || 0,
-              rideRequest.destination?.latitude || rideRequest.destinationLocation?.latitude || 0,
-            ],
-          },
-        };
-
-        // RideRequest schema uses `destination` and `pickupLocation` fields.
-        // (Some older code paths may use `destinationLocation`; keep compatibility.)
-        const effectiveDestination = {
-          address:
-            rideRequest.destination?.address ||
-            rideRequest.destinationLocation?.address ||
-            '',
-          latitude: rideRequest.destination?.latitude ?? rideRequest.destinationLocation?.latitude ?? 0,
-          longitude: rideRequest.destination?.longitude ?? rideRequest.destinationLocation?.longitude ?? 0,
-        };
-
-        const ride = new Ride({
-          _id: rideRequest._id,
-          rider: rideRequest.rider,
-          driver: driverId,
-          pickup: {
-            address: rideRequest.pickupLocation?.address || '',
-            location: {
-              type: 'Point',
-              coordinates: [
-                rideRequest.pickupLocation?.longitude || 0,
-                rideRequest.pickupLocation?.latitude || 0,
-              ],
+          const ride = new Ride({
+            _id: rideRequest._id,
+            rider: rideRequest.rider,
+            driver: effectiveDriverId || driverId || null,
+            pickup: {
+              address: rideRequest.pickupLocation?.address || '',
+              location: {
+                type: 'Point',
+                coordinates: [
+                  rideRequest.pickupLocation?.longitude || 0,
+                  rideRequest.pickupLocation?.latitude || 0,
+                ],
+              },
             },
-          },
-          destination: {
-            address: effectiveDestination.address || '',
-            location: {
-              type: 'Point',
-              coordinates: [effectiveDestination.longitude || 0, effectiveDestination.latitude || 0],
+            destination: {
+              address: effectiveDestination.address || '',
+              location: {
+                type: 'Point',
+                coordinates: [effectiveDestination.longitude || 0, effectiveDestination.latitude || 0],
+              },
             },
-          },
-          status: 'completed',
-          price: {
-            amount: rideRequest.requestedPrice || rideRequest.suggestedPrice || 0,
-            currency: 'PKR',
-            negotiated: true,
-          },
-          distance: rideRequest.distance || 0,
-          duration: rideRequest.estimatedDuration || 0,
-          paymentMethod: rideRequest.paymentMethod || 'cash',
-          rating: {
-            riderRating: null,
-            driverRating: null,
-            riderComment: null,
-            driverComment: null,
-          },
-          endTime: new Date(),
-        });
+            status: 'completed',
+            price: {
+              amount: rideRequest.requestedPrice || rideRequest.suggestedPrice || 0,
+              currency: 'PKR',
+              negotiated: true,
+            },
+            distance: rideRequest.distance || 0,
+            duration: rideRequest.estimatedDuration || 0,
+            paymentMethod: rideRequest.paymentMethod || 'cash',
+            rating: {
+              riderRating: null,
+              driverRating: null,
+              riderComment: null,
+              driverComment: null,
+            },
+            endTime: new Date(),
+          });
 
-        await ride.save();
+          await ride.save();
+        }
+      } catch (bridgeErr) {
+        console.error('end_ride Ride bridge error (non-fatal):', bridgeErr?.message || bridgeErr);
       }
 
-      // Notify rider that ride is complete (user room — reliable after reconnect)
-      emitToUser(io, rideRequest.rider, 'ride_completed', { rideRequestId, driverId });
-      socket.emit('ride_completed', { rideRequestId });
-      console.log(`✅ Ride ${rideRequestId} completed by driver ${driverId}`);
+      console.log(`✅ Ride ${rideRequestId} completed by driver ${effectiveDriverId || driverId}`);
       markEventProcessed(eventId);
       if (typeof ack === 'function') ack({ ok: true, eventId });
     } catch (err) {
@@ -1099,10 +1094,37 @@ function getNetworkIP() {
 
 const networkIP = getNetworkIP();
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Server accessible at:`);
-  console.log(`  - Local: http://localhost:${PORT}`);
-  console.log(`  - Network: http://${networkIP}:${PORT}`);
-  console.log(`  - All interfaces: 0.0.0.0:${PORT}`);
+async function startServer() {
+  const redisUrl = process.env.REDIS_URL || process.env.REDISCLOUD_URL;
+  if (redisUrl) {
+    try {
+      const { createClient } = require('redis');
+      const { createAdapter } = require('@socket.io/redis-adapter');
+      const pubClient = createClient({ url: redisUrl });
+      const subClient = pubClient.duplicate();
+      pubClient.on('error', (e) => console.error('Redis pub client error:', e.message));
+      subClient.on('error', (e) => console.error('Redis sub client error:', e.message));
+      await Promise.all([pubClient.connect(), subClient.connect()]);
+      io.adapter(createAdapter(pubClient, subClient));
+      console.log('✅ Socket.IO Redis adapter enabled (multi-instance safe)');
+    } catch (e) {
+      console.error(
+        '⚠️ Socket.IO Redis adapter failed; use a single instance or fix REDIS_URL:',
+        e.message || e
+      );
+    }
+  }
+
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on port ${PORT}`);
+    console.log(`Server accessible at:`);
+    console.log(`  - Local: http://localhost:${PORT}`);
+    console.log(`  - Network: http://${networkIP}:${PORT}`);
+    console.log(`  - All interfaces: 0.0.0.0:${PORT}`);
+  });
+}
+
+startServer().catch((err) => {
+  console.error('Failed to start server:', err);
+  process.exit(1);
 });

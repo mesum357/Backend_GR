@@ -1,4 +1,5 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const Ride = require('../models/Ride');
 const User = require('../models/User');
 const { authenticateJWT, requireUserType } = require('../middleware/auth');
@@ -237,6 +238,9 @@ router.put('/:rideId/cancel', authenticateJWT, async (req, res) => {
 router.post('/:rideId/rate', authenticateJWT, async (req, res) => {
   try {
     const { rideId } = req.params;
+    if (!mongoose.isValidObjectId(rideId)) {
+      return res.status(400).json({ error: 'Invalid ride id' });
+    }
     let { rating, comment } = req.body || {};
     if ((rating === undefined || rating === null || rating === '') && req.body) {
       rating = req.body.stars ?? req.body.score ?? req.body.starRating;
@@ -304,8 +308,22 @@ router.post('/:rideId/rate', authenticateJWT, async (req, res) => {
           status: 'completed',
           startTime: rideRequest.startedAt || new Date(),
           endTime: rideRequest.completedAt || new Date(),
+          rating: {
+            riderRating: null,
+            driverRating: null,
+            riderComment: null,
+            driverComment: null,
+          },
         });
-        await ride.save();
+        try {
+          await ride.save();
+        } catch (saveErr) {
+          if (saveErr && saveErr.code === 11000) {
+            ride = await Ride.findById(rideId);
+          } else {
+            throw saveErr;
+          }
+        }
       }
     }
     if (!ride) {
@@ -324,25 +342,35 @@ router.post('/:rideId/rate', authenticateJWT, async (req, res) => {
       return res.status(400).json({ error: 'Can only rate completed rides' });
     }
 
-    // The user submitting the review rates the OTHER party:
-    // - Rider submits → rates driver (driverRating/driverComment)
-    // - Driver submits → rates rider (riderRating/riderComment)
     let ratedUserId = null;
     const trimmedComment =
       typeof comment === 'string' && comment.trim().length > 0 ? comment.trim() : null;
 
+    let ratingUpdate = null;
     if (isRider) {
       if (!ride.driver) return res.status(400).json({ error: 'Driver missing for this ride' });
-      ride.rating.driverRating = numericRating;
-      ride.rating.driverComment = trimmedComment;
       ratedUserId = ride.driver.toString();
+      ratingUpdate = {
+        'rating.driverRating': numericRating,
+        'rating.driverComment': trimmedComment,
+      };
     } else if (isDriver) {
-      ride.rating.riderRating = numericRating;
-      ride.rating.riderComment = trimmedComment;
       ratedUserId = ride.rider.toString();
+      ratingUpdate = {
+        'rating.riderRating': numericRating,
+        'rating.riderComment': trimmedComment,
+      };
     }
 
-    await ride.save();
+    const updatedRide = await Ride.findByIdAndUpdate(
+      ride._id,
+      { $set: ratingUpdate },
+      { new: true, runValidators: false }
+    );
+
+    if (!updatedRide) {
+      return res.status(404).json({ error: 'Ride not found' });
+    }
 
     // Update the RATED user's average rating based on completed rides.
     // Only include rides that already have a numeric rating.
@@ -373,17 +401,26 @@ router.post('/:rideId/rate', authenticateJWT, async (req, res) => {
 
     const averageRating = count > 0 ? sum / count : 0;
 
-    if (ratedUserId) {
-      await User.findByIdAndUpdate(ratedUserId, { rating: averageRating });
+    if (ratedUserId && mongoose.isValidObjectId(ratedUserId)) {
+      const safeAvg = Number.isFinite(averageRating) ? averageRating : 0;
+      await User.findByIdAndUpdate(ratedUserId, { rating: safeAvg });
+    }
+
+    let ridePayload;
+    try {
+      ridePayload =
+        typeof updatedRide.toObject === 'function' ? updatedRide.toObject() : updatedRide;
+    } catch (toObjErr) {
+      ridePayload = { _id: updatedRide._id, status: updatedRide.status };
     }
 
     res.json({
       message: 'Rating submitted successfully',
-      ride
+      ride: ridePayload
     });
 
   } catch (error) {
-    console.error('Rate ride error:', error);
+    console.error('Rate ride error:', error?.message || error, error?.stack);
     res.status(500).json({ error: 'Failed to submit rating' });
   }
 });

@@ -67,7 +67,9 @@ async function httpGet(url, token) {
 
 function connectSocket(label) {
   return new Promise((resolve, reject) => {
-    const socket = io(BASE_URL, { transports: ['websocket', 'polling'], timeout: 20000 });
+    // WebSocket-only avoids polling requests landing on a different Render instance
+    // than the WS upgrade (Socket.IO rooms would otherwise miss events).
+    const socket = io(BASE_URL, { transports: ['websocket'], timeout: 25000 });
     socket.on('connect', () => {
       INFO(`${label} socket connected: ${socket.id}`);
       resolve(socket);
@@ -178,6 +180,13 @@ async function run() {
   riderSocket.emit('authenticate', { userId: riderId, userType: 'rider' });
   const driverSocket = await connectSocket('Driver');
   driverSocket.emit('authenticate', { userId: driverId, userType: 'driver' });
+  const logSockErr = (label, sock) => {
+    sock.on('error', (msg) =>
+      INFO(`${label} socket "error" from server: ${JSON.stringify(msg)}`)
+    );
+  };
+  logSockErr('Rider', riderSocket);
+  logSockErr('Driver', driverSocket);
   await sleep(400);
 
   await httpPost(

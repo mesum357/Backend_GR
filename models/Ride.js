@@ -85,14 +85,10 @@ const rideSchema = new mongoose.Schema({
   rating: {
     riderRating: {
       type: Number,
-      min: 1,
-      max: 5,
       default: null
     },
     driverRating: {
       type: Number,
-      min: 1,
-      max: 5,
       default: null
     },
     riderComment: {
