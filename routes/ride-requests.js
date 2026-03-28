@@ -303,31 +303,50 @@ async function findDriversWithinRadius(latitude, longitude, radiusKm) {
   }
 }
 
-// Get ride request status
+// Get ride request status (rider, assigned driver, or drivers who were offered the request)
 router.get('/:id/status', authenticateJWT, async (req, res) => {
   try {
     const { id } = req.params;
-    
+    const uid = String(req.user._id);
+
     const rideRequest = await RideRequest.findById(id);
-    
+
     if (!rideRequest) {
       return res.status(404).json({ error: 'Ride request not found' });
     }
-    
-    // Check if user is the rider or a driver who can see this request
-    if (rideRequest.rider.toString() !== req.user._id && 
-        !rideRequest.availableDrivers.some(driver => driver.driver.toString() === req.user._id)) {
+
+    const isRider = rideRequest.rider.toString() === uid;
+    const isAssignedDriver =
+      rideRequest.acceptedBy && rideRequest.acceptedBy.toString() === uid;
+    const isAvailableDriver = (rideRequest.availableDrivers || []).some(
+      (entry) => entry.driver && entry.driver.toString() === uid
+    );
+
+    if (!isRider && !isAssignedDriver && !isAvailableDriver) {
       return res.status(403).json({ error: 'Access denied' });
     }
-    
+
     res.json({
+      rideRequest: {
+        id: rideRequest._id,
+        status: rideRequest.status,
+        pickupLocation: rideRequest.pickupLocation,
+        destination: rideRequest.destination,
+        distance: rideRequest.distance,
+        estimatedDuration: rideRequest.estimatedDuration,
+        requestedPrice: rideRequest.requestedPrice,
+        suggestedPrice: rideRequest.suggestedPrice,
+        expiresAt: rideRequest.expiresAt,
+        createdAt: rideRequest.createdAt,
+        acceptedBy: rideRequest.acceptedBy,
+        availableDrivers: rideRequest.availableDrivers,
+      },
       id: rideRequest._id,
       status: rideRequest.status,
       acceptedBy: rideRequest.acceptedBy,
       requestedPrice: rideRequest.requestedPrice,
-      expiresAt: rideRequest.expiresAt
+      expiresAt: rideRequest.expiresAt,
     });
-    
   } catch (error) {
     console.error('Error fetching ride request status:', error);
     res.status(500).json({ error: 'Failed to fetch ride request status' });
@@ -726,48 +745,6 @@ router.post('/:requestId/accept-counter-offer', authenticateJWT, async (req, res
   } catch (error) {
     console.error('Error accepting counter offer:', error);
     res.status(500).json({ error: 'Failed to accept counter offer' });
-  }
-});
-
-// Get ride request status (for riders)
-router.get('/:requestId/status', authenticateJWT, async (req, res) => {
-  try {
-    const { requestId } = req.params;
-
-    const rideRequest = await RideRequest.findById(requestId)
-      .populate('rider', 'firstName lastName')
-      .populate('acceptedBy', 'firstName lastName phone vehicle')
-      .populate('availableDrivers.driver', 'firstName lastName rating vehicle');
-
-    if (!rideRequest) {
-      return res.status(404).json({ error: 'Ride request not found' });
-    }
-
-    if (rideRequest.rider._id.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ error: 'Not authorized to view this request' });
-    }
-
-    res.json({
-      rideRequest: {
-        id: rideRequest._id,
-        status: rideRequest.status,
-        pickupLocation: rideRequest.pickupLocation,
-        destination: rideRequest.destination,
-        distance: rideRequest.distance,
-        estimatedDuration: rideRequest.estimatedDuration,
-        requestedPrice: rideRequest.requestedPrice,
-        suggestedPrice: rideRequest.suggestedPrice,
-        expiresAt: rideRequest.expiresAt,
-        createdAt: rideRequest.createdAt,
-        acceptedBy: rideRequest.acceptedBy,
-        availableDrivers: rideRequest.availableDrivers,
-        timeRemaining: Math.max(0, Math.round((rideRequest.expiresAt - new Date()) / 1000 / 60))
-      }
-    });
-
-  } catch (error) {
-    console.error('Error fetching ride request status:', error);
-    res.status(500).json({ error: 'Failed to fetch ride request status' });
   }
 });
 

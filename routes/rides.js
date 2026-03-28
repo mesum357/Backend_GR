@@ -237,9 +237,18 @@ router.put('/:rideId/cancel', authenticateJWT, async (req, res) => {
 router.post('/:rideId/rate', authenticateJWT, async (req, res) => {
   try {
     const { rideId } = req.params;
-    const { rating, comment } = req.body;
-
-    const numericRating = Number(rating);
+    let { rating, comment } = req.body || {};
+    if ((rating === undefined || rating === null || rating === '') && req.body) {
+      rating = req.body.stars ?? req.body.score ?? req.body.starRating;
+    }
+    let numericRating;
+    if (typeof rating === 'number' && Number.isFinite(rating)) {
+      numericRating = rating;
+    } else if (typeof rating === 'string' && rating.trim() !== '') {
+      numericRating = parseFloat(rating.trim());
+    } else {
+      numericRating = Number(rating);
+    }
     if (!Number.isFinite(numericRating)) {
       return res.status(400).json({ error: 'Rating must be a number' });
     }

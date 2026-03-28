@@ -10,7 +10,8 @@
     "update-config": "node update-frontend-config.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "e2e:local": "node test-fresh-driver-local.js",
-    "e2e:render": "node test-fresh-driver.js"
+    "e2e:render": "node test-fresh-driver.js",
+    "e2e:ride-reviews": "node test-full-ride-e2e-with-reviews.js"
   },
   "keywords": [
     "express",

@@ -153,15 +153,32 @@ const markEventProcessed = (eventId) => {
   processedEventIds.set(eventId, Date.now());
 };
 
+/** Stable Socket.IO room per user so emits survive reconnect (re-auth re-joins same room). */
+const userSocketRoom = (userId) => {
+  const s = userId != null ? String(userId) : '';
+  return s ? `user:${s}` : null;
+};
+const emitToUser = (io, userId, event, payload) => {
+  const room = userSocketRoom(userId);
+  if (room) io.to(room).emit(event, payload);
+};
+
 // Socket.IO connection handling
 io.on('connection', (socket) => {
   console.log(`🔌 New connection: ${socket.id}`);
 
   // Handle user authentication
   socket.on('authenticate', (data) => {
-    const { userId, userType } = data;
+    const { userId: rawUserId, userType } = data;
+    const userId = rawUserId != null ? String(rawUserId) : '';
+    if (!userId) {
+      console.warn('Socket authenticate: missing userId');
+      return;
+    }
     activeConnections.set(userId, socket.id);
-    
+    const room = userSocketRoom(userId);
+    if (room) socket.join(room);
+
     if (userType === 'driver') {
       driverConnections.set(userId, socket.id);
       console.log(`🚗 Driver ${userId} connected`);
@@ -200,21 +217,18 @@ io.on('connection', (socket) => {
           // Calculate arrival time (mock calculation - in real app, use actual distance/time)
           const arrivalTime = Math.floor(Math.random() * 10) + 5; // 5-15 minutes
           
-          // Notify rider with fare offer
-          const riderSocketId = activeConnections.get(rideRequest.rider.toString());
-          if (riderSocketId) {
-            io.to(riderSocketId).emit('fare_offer', {
-              rideRequestId,
-              driverId,
-              driverName: driver ? `${driver.firstName} ${driver.lastName}` : 'Driver',
-              driverRating: driver ? (driver.rating ?? 0) : 0,
-              fareAmount: counterOffer || rideRequest.offeredFare,
-              arrivalTime: arrivalTime,
-              vehicleInfo: driver ? `${driver.vehicleType} ${driver.vehicleModel}` : 'Vehicle',
-              timestamp: Date.now()
-            });
-            console.log(`💰 Fare offer sent to rider ${rideRequest.rider} from driver ${driverId}`);
-          }
+          // Notify rider with fare offer (user room — not raw socket id)
+          emitToUser(io, rideRequest.rider, 'fare_offer', {
+            rideRequestId,
+            driverId,
+            driverName: driver ? `${driver.firstName} ${driver.lastName}` : 'Driver',
+            driverRating: driver ? (driver.rating ?? 0) : 0,
+            fareAmount: counterOffer || rideRequest.offeredFare,
+            arrivalTime: arrivalTime,
+            vehicleInfo: driver ? `${driver.vehicleType} ${driver.vehicleModel}` : 'Vehicle',
+            timestamp: Date.now()
+          });
+          console.log(`💰 Fare offer sent to rider ${rideRequest.rider} from driver ${driverId}`);
 
           // Notify all other drivers that request is no longer available
           rideRequest.availableDrivers.forEach(availableDriver => {
@@ -259,13 +273,11 @@ io.on('connection', (socket) => {
                 }
 
                 // Notify rider about timeout
-                if (riderSocketId) {
-                  io.to(riderSocketId).emit('fare_offer_timeout', {
-                    rideRequestId,
-                    message: 'Your response time has expired. Please request a new ride.',
-                    action: 'timeout'
-                  });
-                }
+                emitToUser(io, currentRequest.rider, 'fare_offer_timeout', {
+                  rideRequestId,
+                  message: 'Your response time has expired. Please request a new ride.',
+                  action: 'timeout'
+                });
               }
             } catch (timeoutError) {
               console.error('Error handling fare offer timeout:', timeoutError);
@@ -287,15 +299,12 @@ io.on('connection', (socket) => {
         await rideRequest.save();
 
         // Notify rider about counter offer
-        const riderSocketId = activeConnections.get(rideRequest.rider.toString());
-        if (riderSocketId) {
-          io.to(riderSocketId).emit('ride_counter_offer', {
-            rideRequestId,
-            driverId,
-            counterOffer,
-            message: 'Driver has made a counter offer'
-          });
-        }
+        emitToUser(io, rideRequest.rider, 'ride_counter_offer', {
+          rideRequestId,
+          driverId,
+          counterOffer,
+          message: 'Driver has made a counter offer'
+        });
 
         socket.emit('response_success', { message: 'Counter offer sent successfully' });
       }
@@ -334,19 +343,16 @@ io.on('connection', (socket) => {
       await rideRequest.save();
 
       // Notify rider about the fare offer
-      const riderSocketId = activeConnections.get(rideRequest.rider.toString());
-      if (riderSocketId) {
-        io.to(riderSocketId).emit('fare_offer', {
-          rideRequestId,
-          driverId,
-          driverName,
-          driverRating,
-          fareAmount,
-          arrivalTime,
-          vehicleInfo
-        });
-        console.log(`💰 Fare offer sent to rider ${rideRequest.rider} from driver ${driverId}`);
-      }
+      emitToUser(io, rideRequest.rider, 'fare_offer', {
+        rideRequestId,
+        driverId,
+        driverName,
+        driverRating,
+        fareAmount,
+        arrivalTime,
+        vehicleInfo
+      });
+      console.log(`💰 Fare offer sent to rider ${rideRequest.rider} from driver ${driverId}`);
 
       socket.emit('fare_offer_sent', { message: 'Fare offer sent successfully' });
 
@@ -394,15 +400,12 @@ io.on('connection', (socket) => {
 
       const viewedCount = (rideRequest.availableDrivers || []).filter((d) => !!d?.viewedAt).length;
 
-      const riderSocketId = activeConnections.get(rideRequest.rider.toString());
-      if (riderSocketId) {
-        io.to(riderSocketId).emit('ride_request_viewed', {
-          rideRequestId,
-          viewedCount,
-          driverId,
-          timestamp: Date.now(),
-        });
-      }
+      emitToUser(io, rideRequest.rider, 'ride_request_viewed', {
+        rideRequestId,
+        viewedCount,
+        driverId,
+        timestamp: Date.now(),
+      });
     } catch (e) {
       console.error('Error handling ride_request_viewed:', e);
     }
@@ -440,10 +443,7 @@ io.on('connection', (socket) => {
       await rideRequest.save();
 
       // Notify rider (important so rider overlay closes in realtime)
-      const riderSocketId = activeConnections.get(rideRequest.rider.toString());
-      if (riderSocketId) {
-        io.to(riderSocketId).emit('ride_cancelled', { rideRequestId });
-      }
+      emitToUser(io, rideRequest.rider, 'ride_cancelled', { rideRequestId });
 
       // Notify accepted driver if any
       if (rideRequest.acceptedBy) {
@@ -521,26 +521,20 @@ io.on('connection', (socket) => {
       await rideRequest.save();
 
       // Notify driver about the response
-      const driverSocketId = activeConnections.get(latestOffer.driver.toString());
-      if (driverSocketId) {
-        io.to(driverSocketId).emit('fare_response', {
-          rideRequestId,
-          riderId,
-          action,
-          timestamp: Date.now()
-        });
-        console.log(`💰 Fare response sent to driver ${latestOffer.driver} from rider ${riderId}: ${action}`);
-      }
+      emitToUser(io, latestOffer.driver, 'fare_response', {
+        rideRequestId,
+        riderId,
+        action,
+        timestamp: Date.now()
+      });
+      console.log(`💰 Fare response sent to driver ${latestOffer.driver} from rider ${riderId}: ${action}`);
 
       // Notify rider about the response
-      const riderSocketId = activeConnections.get(riderId);
-      if (riderSocketId) {
-        io.to(riderSocketId).emit('fare_response_confirmed', {
-          rideRequestId,
-          action,
-          message: `Fare offer ${action}ed successfully`
-        });
-      }
+      emitToUser(io, riderId, 'fare_response_confirmed', {
+        rideRequestId,
+        action,
+        message: `Fare offer ${action}ed successfully`
+      });
 
       // When rider accepts, emit driver_assigned with full driver info to rider
       if (action === 'accept') {
@@ -550,27 +544,25 @@ io.on('connection', (socket) => {
             'firstName lastName phone rating vehicleType vehicleModel vehicleColor vehiclePlateNumber currentLocation'
           );
           const driverId = latestOffer.driver.toString();
-          if (riderSocketId) {
-            io.to(riderSocketId).emit('driver_assigned', {
-              rideRequestId,
-              driver: {
-                _id: driverId,
-                id: driverId,
-                firstName: driver ? driver.firstName : 'Driver',
-                lastName: driver ? driver.lastName : '',
-                phone: driver ? driver.phone : '',
-                rating: driver ? (driver.rating ?? 0) : 0,
-                vehicleInfo: {
-                  make: driver ? (driver.vehicleType || 'Vehicle') : 'Vehicle',
-                  model: driver ? (driver.vehicleModel || '') : '',
-                  color: driver ? (driver.vehicleColor || '') : '',
-                  plateNumber: driver ? (driver.vehiclePlateNumber || '---') : '---'
-                },
-                currentLocation: driver ? driver.currentLocation : null
-              }
-            });
-            console.log(`🚗 driver_assigned emitted to rider ${riderId}`);
-          }
+          emitToUser(io, riderId, 'driver_assigned', {
+            rideRequestId,
+            driver: {
+              _id: driverId,
+              id: driverId,
+              firstName: driver ? driver.firstName : 'Driver',
+              lastName: driver ? driver.lastName : '',
+              phone: driver ? driver.phone : '',
+              rating: driver ? (driver.rating ?? 0) : 0,
+              vehicleInfo: {
+                make: driver ? (driver.vehicleType || 'Vehicle') : 'Vehicle',
+                model: driver ? (driver.vehicleModel || '') : '',
+                color: driver ? (driver.vehicleColor || '') : '',
+                plateNumber: driver ? (driver.vehiclePlateNumber || '---') : '---'
+              },
+              currentLocation: driver ? driver.currentLocation : null
+            }
+          });
+          console.log(`🚗 driver_assigned emitted to rider ${riderId}`);
         } catch (driverLookupErr) {
           console.error('Error fetching driver for driver_assigned:', driverLookupErr);
         }
@@ -945,11 +937,8 @@ io.on('connection', (socket) => {
       rideRequest.startedAt = new Date();
       await rideRequest.save();
       // Notify rider that ride has started
-      const riderSocketId = activeConnections.get(rideRequest.rider.toString());
-      if (riderSocketId) {
-        io.to(riderSocketId).emit('ride_started', { rideRequestId, driverId });
-        console.log(`🚗 Ride ${rideRequestId} started by driver ${driverId}`);
-      }
+      emitToUser(io, rideRequest.rider, 'ride_started', { rideRequestId, driverId });
+      console.log(`🚗 Ride ${rideRequestId} started by driver ${driverId}`);
       socket.emit('ride_started_ack', { rideRequestId });
       markEventProcessed(eventId);
       if (typeof ack === 'function') ack({ ok: true, eventId });
@@ -1060,11 +1049,8 @@ io.on('connection', (socket) => {
         await ride.save();
       }
 
-      // Notify rider that ride is complete
-      const riderSocketId = activeConnections.get(rideRequest.rider.toString());
-      if (riderSocketId) {
-        io.to(riderSocketId).emit('ride_completed', { rideRequestId, driverId });
-      }
+      // Notify rider that ride is complete (user room — reliable after reconnect)
+      emitToUser(io, rideRequest.rider, 'ride_completed', { rideRequestId, driverId });
       socket.emit('ride_completed', { rideRequestId });
       console.log(`✅ Ride ${rideRequestId} completed by driver ${driverId}`);
       markEventProcessed(eventId);
