@@ -8,15 +8,30 @@
  *   POST /api/rides/:rideRequestId/rate as rider (rate driver) and as driver (rate rider)
  *   Assert ratings accepted (200)
  *
- * Usage:
- *   node test-full-ride-e2e-with-reviews.js
- *   API_URL=https://backend-gr-qcny.onrender.com node test-full-ride-e2e-with-reviews.js
+ * Usage (local — default target is your machine):
+ *   1. Start MongoDB, then from Backend_GR: npm run dev   (or: node server.js)
+ *   2. npm run e2e:ride-reviews
+ *      (forces http://127.0.0.1:8080 — ignores API_URL in your shell)
+ *
+ * Optional port: LOCAL_API_PORT=3000 npm run e2e:ride-reviews
+ *
+ * Remote (e.g. Render) after deploy:
+ *   API_URL=https://your-app.onrender.com npm run e2e:ride-reviews:remote
  */
 
 const fetch = require('node-fetch').default;
 const io = require('socket.io-client');
 
-const BASE_URL = (process.env.API_URL || process.env.BASE_URL || 'http://localhost:8080').replace(/\/$/, '');
+const LOCAL_PORT = process.env.LOCAL_API_PORT || '8080';
+const LOCAL_DEFAULT = `http://127.0.0.1:${LOCAL_PORT}`;
+const USE_LOCAL_ONLY =
+  process.env.LOCAL_ONLY === '1' || process.env.LOCAL_ONLY === 'true';
+
+const BASE_URL = (
+  USE_LOCAL_ONLY
+    ? LOCAL_DEFAULT
+    : (process.env.API_URL || process.env.BASE_URL || LOCAL_DEFAULT)
+).replace(/\/$/, '');
 const PASSWORD = 'password123';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -37,6 +52,28 @@ function ok(label, condition, detail = '') {
     failed++;
   }
   return condition;
+}
+
+/** Assert HTTP success; on failure print method, URL, status, and full JSON (for API debugging). */
+function okHttp(label, method, url, res) {
+  if (res.ok) {
+    PASS(label);
+    passed++;
+    return true;
+  }
+  FAIL(`${label} — ${res.status}`);
+  INFO(`  debug: ${method} ${url}`);
+  INFO(`    status: ${res.status}`);
+  try {
+    INFO(`    body: ${JSON.stringify(res.data, null, 2)}`);
+  } catch {
+    INFO(`    body: (unserializable)`);
+  }
+  if (res.data?.detail) {
+    INFO(`    hint: server "detail" → ${res.data.detail}`);
+  }
+  failed++;
+  return false;
 }
 
 async function httpPost(url, body, token) {
@@ -142,6 +179,9 @@ async function loginUser({ email, expectedUserType }) {
 async function run() {
   console.log('\n🚀  GB RIDES — Full E2E (ride + reviews)');
   console.log(`    Backend: ${BASE_URL}`);
+  if (USE_LOCAL_ONLY) {
+    console.log(`    Mode: local only (set API_URL + npm run e2e:ride-reviews:remote for deployed API)`);
+  }
   console.log(`    ${new Date().toISOString()}\n`);
 
   const { riderEmail, riderPhone, driverEmail, driverPhone } = createTestEmails();
@@ -259,19 +299,13 @@ async function run() {
   ok('Rider GET /status 200 + completed', st.ok && stVal === 'completed', `${st.status} ${JSON.stringify(st.data)}`);
 
   INFO('Submit reviews (numeric rating in JSON)');
-  const riderRate = await httpPost(
-    `${BASE_URL}/api/rides/${rideRequestId}/rate`,
-    { rating: 5, comment: 'Great driver' },
-    riderToken
-  );
-  ok('Rider rate driver 200', riderRate.ok, `${riderRate.status} ${JSON.stringify(riderRate.data)}`);
+  const riderRateUrl = `${BASE_URL}/api/rides/${rideRequestId}/rate`;
+  const riderRate = await httpPost(riderRateUrl, { rating: 5, comment: 'Great driver' }, riderToken);
+  okHttp('Rider rate driver 200', 'POST', riderRateUrl, riderRate);
 
-  const driverRate = await httpPost(
-    `${BASE_URL}/api/rides/${rideRequestId}/rate`,
-    { rating: 4, comment: 'Good rider' },
-    driverToken
-  );
-  ok('Driver rate rider 200', driverRate.ok, `${driverRate.status} ${JSON.stringify(driverRate.data)}`);
+  const driverRateUrl = `${BASE_URL}/api/rides/${rideRequestId}/rate`;
+  const driverRate = await httpPost(driverRateUrl, { rating: 4, comment: 'Good rider' }, driverToken);
+  okHttp('Driver rate rider 200', 'POST', driverRateUrl, driverRate);
 
   try {
     riderSocket.disconnect();

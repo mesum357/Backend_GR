@@ -251,7 +251,7 @@ router.put('/:rideId/cancel', authenticateJWT, async (req, res) => {
 // Rate a ride
 router.post('/:rideId/rate', authenticateJWT, async (req, res) => {
   try {
-    const { rideId } = req.params;
+    const rideId = String(req.params.rideId || '').trim();
     if (!mongoose.isValidObjectId(rideId)) {
       return res.status(400).json({ error: 'Invalid ride id' });
     }
@@ -363,89 +363,93 @@ router.post('/:rideId/rate', authenticateJWT, async (req, res) => {
     const trimmedComment =
       typeof comment === 'string' && comment.trim().length > 0 ? comment.trim() : null;
 
-    let ratingUpdate = null;
+    let setFields = null;
     if (isRider) {
       if (!rideDriverId) return res.status(400).json({ error: 'Driver missing for this ride' });
       ratedUserId = rideDriverId;
-      ratingUpdate = {
+      setFields = {
         'rating.driverRating': numericRating,
         'rating.driverComment': trimmedComment,
       };
     } else if (isDriver) {
       if (!rideRiderId) return res.status(400).json({ error: 'Rider missing for this ride' });
       ratedUserId = rideRiderId;
-      ratingUpdate = {
+      setFields = {
         'rating.riderRating': numericRating,
         'rating.riderComment': trimmedComment,
       };
     }
 
-    const updatedRide = await Ride.findByIdAndUpdate(
-      ride._id,
-      { $set: ratingUpdate },
-      { new: true, runValidators: false }
-    );
+    if (!setFields) {
+      return res.status(400).json({ error: 'Could not apply rating' });
+    }
 
-    if (!updatedRide) {
+    // Use native collection update so Mongoose schema casting/strict mode cannot block nested $set.
+    const rideOid = new mongoose.Types.ObjectId(rideId);
+    const updateResult = await Ride.collection.updateOne({ _id: rideOid }, { $set: setFields });
+
+    if (updateResult.matchedCount === 0) {
       return res.status(404).json({ error: 'Ride not found' });
     }
 
+    const updatedRide = await Ride.findById(rideOid)
+      .select('status rating rider driver pickup destination')
+      .lean();
+
     // Update the RATED user's average rating based on completed rides.
-    let averageRating = 0;
     if (ratedUserId && mongoose.isValidObjectId(ratedUserId)) {
-      const ratedOid = new mongoose.Types.ObjectId(ratedUserId);
-      const ratedUserRides = await Ride.find({
-        $or: [{ rider: ratedOid }, { driver: ratedOid }],
-        status: 'completed'
-      });
+      try {
+        const ratedOid = new mongoose.Types.ObjectId(ratedUserId);
+        const ratedUserRides = await Ride.find({
+          $or: [{ rider: ratedOid }, { driver: ratedOid }],
+          status: 'completed',
+        })
+          .select('rating rider driver')
+          .lean();
 
-      let sum = 0;
-      let count = 0;
+        let sum = 0;
+        let count = 0;
 
-      for (const r of ratedUserRides) {
-        if (!r.rating) continue;
-        const rRider = idString(r.rider);
-        if (rRider && rRider === ratedUserId) {
-          const val = r.rating.riderRating;
-          if (typeof val === 'number' && val >= 1 && val <= 5) {
-            sum += val;
-            count += 1;
-          }
-        } else {
-          const val = r.rating.driverRating;
-          if (typeof val === 'number' && val >= 1 && val <= 5) {
-            sum += val;
-            count += 1;
+        for (const r of ratedUserRides) {
+          if (!r.rating) continue;
+          const rRider = idString(r.rider);
+          if (rRider && rRider === ratedUserId) {
+            const val = r.rating.riderRating;
+            if (typeof val === 'number' && val >= 1 && val <= 5) {
+              sum += val;
+              count += 1;
+            }
+          } else {
+            const val = r.rating.driverRating;
+            if (typeof val === 'number' && val >= 1 && val <= 5) {
+              sum += val;
+              count += 1;
+            }
           }
         }
-      }
 
-      averageRating = count > 0 ? sum / count : 0;
-
-      try {
+        const averageRating = count > 0 ? sum / count : 0;
         const safeAvg = Number.isFinite(averageRating) ? averageRating : 0;
-        await User.findByIdAndUpdate(ratedUserId, { rating: safeAvg });
-      } catch (userAvgErr) {
-        console.error('Rate ride: user average update failed (non-fatal):', userAvgErr?.message || userAvgErr);
+        await User.collection.updateOne(
+          { _id: new mongoose.Types.ObjectId(ratedUserId) },
+          { $set: { rating: safeAvg } }
+        );
+      } catch (statsErr) {
+        console.error('Rate ride: stats/average update failed (non-fatal):', statsErr?.message || statsErr);
       }
-    }
-
-    let ridePayload;
-    try {
-      ridePayload =
-        typeof updatedRide.toObject === 'function' ? updatedRide.toObject() : updatedRide;
-    } catch (toObjErr) {
-      ridePayload = { _id: updatedRide._id, status: updatedRide.status };
     }
 
     res.json({
       message: 'Rating submitted successfully',
-      ride: ridePayload
+      ride: updatedRide || { _id: rideOid },
     });
-
   } catch (error) {
     console.error('Rate ride error:', error?.message || error, error?.stack);
-    res.status(500).json({ error: 'Failed to submit rating' });
+    const payload = { error: 'Failed to submit rating' };
+    if (process.env.NODE_ENV !== 'production') {
+      payload.detail = error?.message || String(error);
+    }
+    res.status(500).json(payload);
   }
 });
 

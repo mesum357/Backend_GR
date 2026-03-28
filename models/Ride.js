@@ -112,11 +112,18 @@ const rideSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  // Mongoose enum rejects `null` unless listed; unset rides use null — use a validator instead of enum.
   cancelledBy: {
     type: String,
-    enum: ['rider', 'driver', 'system'],
-    default: null
-  }
+    required: false,
+    default: null,
+    validate: {
+      validator(v) {
+        return v === null || v === undefined || ['rider', 'driver', 'system'].includes(v);
+      },
+      message: 'cancelledBy must be rider, driver, or system',
+    },
+  },
 }, {
   timestamps: true
 });
