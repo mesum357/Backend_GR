@@ -36,6 +36,22 @@ const apiLimiter = rateLimit({
   message: { error: 'Too many requests, please slow down.' },
 });
 app.use('/api', apiLimiter);
+// Some clients send JSON with only Authorization in headers; shallow merge drops Content-Type and
+// express.json skips parsing — body is empty → e.g. "Rating must be a number". Default JSON for /rate.
+app.use((req, res, next) => {
+  const pathOnly = typeof req.url === 'string' ? req.url.split('?')[0] : '';
+  if (
+    req.method === 'POST' &&
+    pathOnly.includes('/api/rides/') &&
+    pathOnly.endsWith('/rate')
+  ) {
+    const ct = req.headers['content-type'];
+    if (!ct || String(ct).trim() === '') {
+      req.headers['content-type'] = 'application/json';
+    }
+  }
+  next();
+});
 app.use(express.json({ limit: '256kb' }));
 app.use(express.urlencoded({ extended: true }));
 
