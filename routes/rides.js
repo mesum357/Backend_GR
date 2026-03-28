@@ -6,6 +6,20 @@ const { authenticateJWT, requireUserType } = require('../middleware/auth');
 const router = express.Router();
 const RideRequest = require('../models/RideRequest');
 
+/** ObjectId hex string; works for ObjectId, populated doc, or { _id } */
+function idString(ref) {
+  if (ref == null) return '';
+  if (typeof ref === 'object' && ref._id != null) return String(ref._id);
+  return String(ref);
+}
+
+function authUserIdString(user) {
+  if (!user) return '';
+  if (user._id != null) return String(user._id);
+  if (user.id != null) return String(user.id);
+  return '';
+}
+
 // Book a new ride
 router.post('/book', authenticateJWT, requireUserType('rider'), async (req, res) => {
   try {
@@ -330,9 +344,12 @@ router.post('/:rideId/rate', authenticateJWT, async (req, res) => {
       return res.status(404).json({ error: 'Ride not found' });
     }
 
-    // Check if user is the rider or driver
-    const isRider = ride.rider && ride.rider.toString() === req.user._id.toString();
-    const isDriver = ride.driver && ride.driver.toString() === req.user._id.toString();
+    const jwtUid = authUserIdString(req.user);
+    const rideRiderId = idString(ride.rider);
+    const rideDriverId = idString(ride.driver);
+
+    const isRider = !!rideRiderId && rideRiderId === jwtUid;
+    const isDriver = !!rideDriverId && rideDriverId === jwtUid;
 
     if (!isRider && !isDriver) {
       return res.status(403).json({ error: 'Not authorized' });
@@ -348,14 +365,15 @@ router.post('/:rideId/rate', authenticateJWT, async (req, res) => {
 
     let ratingUpdate = null;
     if (isRider) {
-      if (!ride.driver) return res.status(400).json({ error: 'Driver missing for this ride' });
-      ratedUserId = ride.driver.toString();
+      if (!rideDriverId) return res.status(400).json({ error: 'Driver missing for this ride' });
+      ratedUserId = rideDriverId;
       ratingUpdate = {
         'rating.driverRating': numericRating,
         'rating.driverComment': trimmedComment,
       };
     } else if (isDriver) {
-      ratedUserId = ride.rider.toString();
+      if (!rideRiderId) return res.status(400).json({ error: 'Rider missing for this ride' });
+      ratedUserId = rideRiderId;
       ratingUpdate = {
         'rating.riderRating': numericRating,
         'rating.riderComment': trimmedComment,
@@ -373,37 +391,43 @@ router.post('/:rideId/rate', authenticateJWT, async (req, res) => {
     }
 
     // Update the RATED user's average rating based on completed rides.
-    // Only include rides that already have a numeric rating.
-    const ratedUserRides = await Ride.find({
-      $or: [{ rider: ratedUserId }, { driver: ratedUserId }],
-      status: 'completed'
-    });
+    let averageRating = 0;
+    if (ratedUserId && mongoose.isValidObjectId(ratedUserId)) {
+      const ratedOid = new mongoose.Types.ObjectId(ratedUserId);
+      const ratedUserRides = await Ride.find({
+        $or: [{ rider: ratedOid }, { driver: ratedOid }],
+        status: 'completed'
+      });
 
-    let sum = 0;
-    let count = 0;
+      let sum = 0;
+      let count = 0;
 
-    for (const r of ratedUserRides) {
-      if (!r.rating) continue;
-      if (r.rider && r.rider.toString() === ratedUserId?.toString()) {
-        const val = r.rating.riderRating;
-        if (typeof val === 'number' && val >= 1 && val <= 5) {
-          sum += val;
-          count += 1;
-        }
-      } else {
-        const val = r.rating.driverRating;
-        if (typeof val === 'number' && val >= 1 && val <= 5) {
-          sum += val;
-          count += 1;
+      for (const r of ratedUserRides) {
+        if (!r.rating) continue;
+        const rRider = idString(r.rider);
+        if (rRider && rRider === ratedUserId) {
+          const val = r.rating.riderRating;
+          if (typeof val === 'number' && val >= 1 && val <= 5) {
+            sum += val;
+            count += 1;
+          }
+        } else {
+          const val = r.rating.driverRating;
+          if (typeof val === 'number' && val >= 1 && val <= 5) {
+            sum += val;
+            count += 1;
+          }
         }
       }
-    }
 
-    const averageRating = count > 0 ? sum / count : 0;
+      averageRating = count > 0 ? sum / count : 0;
 
-    if (ratedUserId && mongoose.isValidObjectId(ratedUserId)) {
-      const safeAvg = Number.isFinite(averageRating) ? averageRating : 0;
-      await User.findByIdAndUpdate(ratedUserId, { rating: safeAvg });
+      try {
+        const safeAvg = Number.isFinite(averageRating) ? averageRating : 0;
+        await User.findByIdAndUpdate(ratedUserId, { rating: safeAvg });
+      } catch (userAvgErr) {
+        console.error('Rate ride: user average update failed (non-fatal):', userAvgErr?.message || userAvgErr);
+      }
     }
 
     let ridePayload;
