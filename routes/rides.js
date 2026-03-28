@@ -239,10 +239,11 @@ router.post('/:rideId/rate', authenticateJWT, async (req, res) => {
     const { rideId } = req.params;
     const { rating, comment } = req.body;
 
-    if (typeof rating !== 'number' || !Number.isFinite(rating)) {
+    const numericRating = Number(rating);
+    if (!Number.isFinite(numericRating)) {
       return res.status(400).json({ error: 'Rating must be a number' });
     }
-    if (rating < 1 || rating > 5) {
+    if (numericRating < 1 || numericRating > 5) {
       return res.status(400).json({ error: 'Rating must be between 1 and 5' });
     }
 
@@ -323,11 +324,11 @@ router.post('/:rideId/rate', authenticateJWT, async (req, res) => {
 
     if (isRider) {
       if (!ride.driver) return res.status(400).json({ error: 'Driver missing for this ride' });
-      ride.rating.driverRating = rating;
+      ride.rating.driverRating = numericRating;
       ride.rating.driverComment = trimmedComment;
       ratedUserId = ride.driver.toString();
     } else if (isDriver) {
-      ride.rating.riderRating = rating;
+      ride.rating.riderRating = numericRating;
       ride.rating.riderComment = trimmedComment;
       ratedUserId = ride.rider.toString();
     }
