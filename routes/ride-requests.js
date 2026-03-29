@@ -101,7 +101,7 @@ router.post('/create', authenticateJWT, async (req, res) => {
 
     // Find nearby drivers and add them to available drivers
     const nearbyDrivers = await rideRequest.findNearbyDrivers(rideRequest.requestRadius);
-    
+
     for (const driver of nearbyDrivers) {
       const distance = rideRequest.calculateDistance(
         driver.location.coordinates[1], // latitude
@@ -109,9 +109,9 @@ router.post('/create', authenticateJWT, async (req, res) => {
         pickupLocation.latitude,
         pickupLocation.longitude
       );
-      
+
       const estimatedTime = Math.round(distance * 2); // 2 minutes per km
-      
+
       rideRequest.availableDrivers.push({
         driver: driver._id,
         distance,
@@ -158,17 +158,17 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
       vehicleType = 'any',
       notes = ''
     } = req.body;
-    
+
     console.log('🔧 Payment method received:', paymentMethod);
-    
+
     // Normalize payment method to lowercase
     const normalizedPaymentMethod = paymentMethod ? paymentMethod.toLowerCase() : 'cash';
     console.log('🔧 Normalized payment method:', normalizedPaymentMethod);
 
     // Validate required fields
     if (!pickup || !destination || !offeredFare) {
-      return res.status(400).json({ 
-        error: 'Pickup location, destination, and offered fare are required' 
+      return res.status(400).json({
+        error: 'Pickup location, destination, and offered fare are required'
       });
     }
 
@@ -179,11 +179,11 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
 
     // Cancel any existing searching/pending requests from this rider
     await RideRequest.updateMany(
-      { 
-        rider: req.user._id, 
+      {
+        rider: req.user._id,
         status: { $in: ['searching', 'pending'] }
       },
-      { 
+      {
         status: 'cancelled',
         cancelledAt: new Date()
       }
@@ -342,7 +342,7 @@ function calculateHaversineDistance(lat1, lon1, lat2, lon2) {
   const R = 6371; // Earth's radius in kilometers
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = 
+  const a =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
     Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
     Math.sin(dLon / 2) * Math.sin(dLon / 2);
@@ -418,7 +418,7 @@ router.get('/test-all', async (req, res) => {
     const allRequests = await RideRequest.find({})
       .populate('rider', 'firstName lastName rating totalRides')
       .sort({ createdAt: -1 });
-    
+
     console.log('🔧 All ride requests in database:', allRequests.length);
     res.json({
       total: allRequests.length,
@@ -457,9 +457,9 @@ router.get('/available-simple', authenticateJWT, async (req, res) => {
       status: { $in: ['searching', 'pending'] },
       expiresAt: { $gt: new Date() }
     })
-    .populate('rider', 'firstName lastName rating totalRides')
-    .sort({ createdAt: -1 })
-    .limit(20);
+      .populate('rider', 'firstName lastName rating totalRides')
+      .sort({ createdAt: -1 })
+      .limit(20);
 
     console.log('🔧 Found ride requests:', rideRequests.length);
     rideRequests.forEach(request => {
@@ -471,13 +471,13 @@ router.get('/available-simple', authenticateJWT, async (req, res) => {
       const rider = request.rider;
       const pickupLocation = request.pickupLocation;
       const destination = request.destination;
-      
+
       // Normalize distance values (schema uses Number, legacy could be String)
       const numericDistance = typeof request.distance === 'number'
         ? request.distance
         : (typeof request.distance === 'string'
-            ? parseFloat((request.distance || '0').toString().replace(' km', ''))
-            : 0);
+          ? parseFloat((request.distance || '0').toString().replace(' km', ''))
+          : 0);
 
       const distanceLabel = Number.isFinite(numericDistance)
         ? `${numericDistance.toFixed(1)} km`
@@ -553,9 +553,9 @@ router.get('/available', authenticateJWT, async (req, res) => {
         $lte: parseFloat(longitude) + (radius / (111 * Math.cos(parseFloat(latitude) * Math.PI / 180)))
       }
     })
-    .populate('rider', 'firstName lastName rating totalRides')
-    .sort({ createdAt: -1 })
-    .limit(20);
+      .populate('rider', 'firstName lastName rating totalRides')
+      .sort({ createdAt: -1 })
+      .limit(20);
 
     // Calculate exact distances and filter
     const filteredRequests = rideRequests.filter(request => {
@@ -576,7 +576,7 @@ router.get('/available', authenticateJWT, async (req, res) => {
         request.pickupLocation.latitude,
         request.pickupLocation.longitude
       );
-      
+
       const estimatedTime = Math.round(distance * 2); // 2 minutes per km
 
       return {
@@ -673,9 +673,9 @@ router.post('/:requestId/respond', authenticateJWT, async (req, res) => {
         rideRequest.acceptedBy = req.user._id;
         driverResponse.status = 'accepted';
         driverResponse.respondedAt = new Date();
-        
+
         await rideRequest.save();
-        
+
         // Emit WebSocket event to notify rider
         const io = req.app.get('io');
         if (io) {
@@ -689,10 +689,10 @@ router.post('/:requestId/respond', authenticateJWT, async (req, res) => {
             });
             console.log(`🚗 Notified rider ${rideRequest.rider} about driver assignment`);
           }
-          
+
           // Notify all drivers that this request is no longer available
           const driverConnections = req.app.get('driverConnections');
-          
+
           driverConnections.forEach((socketId, driverId) => {
             io.to(socketId).emit('ride_request_status_update', {
               rideRequestId: rideRequest._id,
@@ -701,10 +701,10 @@ router.post('/:requestId/respond', authenticateJWT, async (req, res) => {
               message: 'Ride request has been accepted by a driver'
             });
           });
-          
+
           console.log(`📡 Notified all drivers about ride request ${rideRequest._id} acceptance`);
         }
-        
+
         res.json({
           message: 'Ride request accepted successfully',
           rideRequest: {
@@ -721,13 +721,13 @@ router.post('/:requestId/respond', authenticateJWT, async (req, res) => {
         if (!counterOffer || counterOffer <= 0) {
           return res.status(400).json({ error: 'Valid counter offer is required' });
         }
-        
+
         driverResponse.status = 'counter_offered';
         driverResponse.counterOffer = counterOffer;
         driverResponse.respondedAt = new Date();
-        
+
         await rideRequest.save();
-        
+
         res.json({
           message: 'Counter offer sent successfully',
           counterOffer
@@ -737,9 +737,9 @@ router.post('/:requestId/respond', authenticateJWT, async (req, res) => {
       case 'reject':
         driverResponse.status = 'rejected';
         driverResponse.respondedAt = new Date();
-        
+
         await rideRequest.save();
-        
+
         res.json({
           message: 'Ride request rejected'
         });
@@ -804,91 +804,6 @@ router.post('/:requestId/accept-counter-offer', authenticateJWT, async (req, res
   } catch (error) {
     console.error('Error accepting counter offer:', error);
     res.status(500).json({ error: 'Failed to accept counter offer' });
-  }
-});
-
-// Update fare on an existing ride request without cancelling it
-router.patch('/:requestId/update-fare', authenticateJWT, async (req, res) => {
-  try {
-    const { requestId } = req.params;
-    const { newFare } = req.body;
-
-    if (!newFare || newFare <= 0) {
-      return res.status(400).json({ error: 'A valid positive fare is required' });
-    }
-
-    if (req.user.userType !== 'rider') {
-      return res.status(403).json({ error: 'Only riders can update the fare' });
-    }
-
-    const rideRequest = await RideRequest.findById(requestId);
-    if (!rideRequest) {
-      return res.status(404).json({ error: 'Ride request not found' });
-    }
-
-    if (rideRequest.rider.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ error: 'Not authorized to update this request' });
-    }
-
-    if (!['searching', 'pending'].includes(rideRequest.status)) {
-      return res.status(400).json({ error: 'Cannot update fare at this stage' });
-    }
-
-    const oldFare = rideRequest.requestedPrice;
-    rideRequest.requestedPrice = newFare;
-    rideRequest.suggestedPrice = newFare;
-    await rideRequest.save();
-
-    console.log(`💰 Fare updated for ride ${requestId}: PKR ${oldFare} → PKR ${newFare}`);
-
-    // Re-notify all connected drivers about the updated fare
-    const io = req.app.get('io');
-    if (io) {
-      const driverConnections = req.app.get('driverConnections');
-      const rideRequestPayload = {
-        rideRequestId: rideRequest._id,
-        rider: {
-          id: req.user._id,
-          firstName: req.user.firstName,
-          lastName: req.user.lastName,
-          rating: req.user.rating || 0
-        },
-        pickup: rideRequest.pickupLocation,
-        destination: rideRequest.destination,
-        distance: rideRequest.distance,
-        estimatedDuration: rideRequest.estimatedDuration,
-        offeredFare: newFare,
-        vehicleType: rideRequest.vehicleType,
-        paymentMethod: rideRequest.paymentMethod,
-        notes: rideRequest.notes,
-        expiresAt: rideRequest.expiresAt,
-        createdAt: rideRequest.createdAt,
-        fareUpdated: true,
-        oldFare,
-      };
-
-      if (driverConnections) {
-        driverConnections.forEach((socketId, driverId) => {
-          io.to(socketId).emit('ride_request', rideRequestPayload);
-        });
-      }
-      console.log(`📡 Notified drivers about fare update for ride ${requestId}`);
-    }
-
-    res.json({
-      message: 'Fare updated successfully',
-      rideRequest: {
-        id: rideRequest._id,
-        status: rideRequest.status,
-        requestedPrice: rideRequest.requestedPrice,
-        oldFare,
-        newFare,
-      }
-    });
-
-  } catch (error) {
-    console.error('Error updating fare:', error);
-    res.status(500).json({ error: 'Failed to update fare' });
   }
 });
 
@@ -1009,11 +924,11 @@ router.get('/:requestId/debug', authenticateJWT, async (req, res) => {
   try {
     const { requestId } = req.params;
     const rideRequest = await RideRequest.findById(requestId);
-    
+
     if (!rideRequest) {
       return res.status(404).json({ error: 'Ride request not found' });
     }
-    
+
     res.json({
       id: rideRequest._id,
       status: rideRequest.status,
