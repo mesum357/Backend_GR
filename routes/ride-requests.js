@@ -807,6 +807,91 @@ router.post('/:requestId/accept-counter-offer', authenticateJWT, async (req, res
   }
 });
 
+// Update fare on an existing ride request without cancelling it
+router.patch('/:requestId/update-fare', authenticateJWT, async (req, res) => {
+  try {
+    const { requestId } = req.params;
+    const { newFare } = req.body;
+
+    if (!newFare || newFare <= 0) {
+      return res.status(400).json({ error: 'A valid positive fare is required' });
+    }
+
+    if (req.user.userType !== 'rider') {
+      return res.status(403).json({ error: 'Only riders can update the fare' });
+    }
+
+    const rideRequest = await RideRequest.findById(requestId);
+    if (!rideRequest) {
+      return res.status(404).json({ error: 'Ride request not found' });
+    }
+
+    if (rideRequest.rider.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ error: 'Not authorized to update this request' });
+    }
+
+    if (!['searching', 'pending'].includes(rideRequest.status)) {
+      return res.status(400).json({ error: 'Cannot update fare at this stage' });
+    }
+
+    const oldFare = rideRequest.requestedPrice;
+    rideRequest.requestedPrice = newFare;
+    rideRequest.suggestedPrice = newFare;
+    await rideRequest.save();
+
+    console.log(`💰 Fare updated for ride ${requestId}: PKR ${oldFare} → PKR ${newFare}`);
+
+    // Re-notify all connected drivers about the updated fare
+    const io = req.app.get('io');
+    if (io) {
+      const driverConnections = req.app.get('driverConnections');
+      const rideRequestPayload = {
+        rideRequestId: rideRequest._id,
+        rider: {
+          id: req.user._id,
+          firstName: req.user.firstName,
+          lastName: req.user.lastName,
+          rating: req.user.rating || 0
+        },
+        pickup: rideRequest.pickupLocation,
+        destination: rideRequest.destination,
+        distance: rideRequest.distance,
+        estimatedDuration: rideRequest.estimatedDuration,
+        offeredFare: newFare,
+        vehicleType: rideRequest.vehicleType,
+        paymentMethod: rideRequest.paymentMethod,
+        notes: rideRequest.notes,
+        expiresAt: rideRequest.expiresAt,
+        createdAt: rideRequest.createdAt,
+        fareUpdated: true,
+        oldFare,
+      };
+
+      if (driverConnections) {
+        driverConnections.forEach((socketId, driverId) => {
+          io.to(socketId).emit('ride_request', rideRequestPayload);
+        });
+      }
+      console.log(`📡 Notified drivers about fare update for ride ${requestId}`);
+    }
+
+    res.json({
+      message: 'Fare updated successfully',
+      rideRequest: {
+        id: rideRequest._id,
+        status: rideRequest.status,
+        requestedPrice: rideRequest.requestedPrice,
+        oldFare,
+        newFare,
+      }
+    });
+
+  } catch (error) {
+    console.error('Error updating fare:', error);
+    res.status(500).json({ error: 'Failed to update fare' });
+  }
+});
+
 // Cancel ride request (rider: searching/pending/accepted/in_progress; accepted driver: accepted/in_progress)
 router.post('/:requestId/cancel', authenticateJWT, async (req, res) => {
   try {
