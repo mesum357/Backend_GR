@@ -14,7 +14,12 @@
     "e2e:ride-reviews": "node run-e2e-ride-reviews-local.js",
     "e2e:ride-reviews:remote": "node test-full-ride-e2e-with-reviews.js",
     "e2e:ride-cancel": "node run-e2e-ride-cancel-local.js",
-    "e2e:ride-cancel:remote": "node test-ride-cancellation-e2e.js"
+    "e2e:ride-cancel:remote": "node test-ride-cancellation-e2e.js",
+    "e2e:multi-request": "node run-e2e-multi-request-local.js",
+    "e2e:multi-request:remote": "node test-multi-request-fare-offers-e2e.js",
+    "e2e:cancel-recreate": "node run-e2e-cancel-recreate-local.js",
+    "e2e:cancel-recreate:remote": "node test-cancel-recreate-driver-visibility-e2e.js",
+    "e2e:all-critical": "node run-e2e-all-critical-local.js"
   },
   "keywords": [
     "express",

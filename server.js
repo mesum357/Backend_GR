@@ -221,12 +221,17 @@ io.on('connection', (socket) => {
       }
 
       if (action === 'accept') {
-        // Atomic assignment - only first accept wins
-        if (rideRequest.status === 'pending') {
-          // Update status to 'accepted' but don't finalize yet - wait for rider response
-          rideRequest.status = 'accepted';
-          rideRequest.acceptedBy = driverId;
-          rideRequest.acceptedAt = new Date();
+        // Driver accept should only send a fare offer. Final assignment happens on rider acceptance.
+        if (rideRequest.status === 'pending' || rideRequest.status === 'searching') {
+          if (Array.isArray(rideRequest.availableDrivers)) {
+            rideRequest.availableDrivers.forEach((availableDriver) => {
+              if (availableDriver.driver.toString() === driverId) {
+                availableDriver.status = 'accepted';
+                availableDriver.counterOffer = counterOffer || availableDriver.counterOffer;
+                availableDriver.respondedAt = new Date();
+              }
+            });
+          }
           await rideRequest.save();
 
           // Get driver information for the offer
@@ -249,59 +254,11 @@ io.on('connection', (socket) => {
           });
           console.log(`💰 Fare offer sent to rider ${rideRequest.rider} from driver ${driverId}`);
 
-          // Notify all other drivers that request is no longer available
-          rideRequest.availableDrivers.forEach(availableDriver => {
-            if (availableDriver.driver.toString() !== driverId) {
-              const driverSocketId = driverConnections.get(availableDriver.driver.toString());
-              if (driverSocketId) {
-                io.to(driverSocketId).emit('ride_request_cancelled', {
-                  rideRequestId,
-                  message: 'This ride request has been accepted by another driver'
-                });
-              }
-            }
-          });
-
           socket.emit('response_success', { 
-            message: 'Ride request accepted successfully. Waiting for rider response...',
+            message: 'Offer sent successfully. Waiting for rider response...',
             rideRequestId,
             waitingForRider: true
           });
-
-          // Set up timeout for rider response (15 seconds) - FIXED
-          setTimeout(async () => {
-            try {
-              // Check if the ride request is still in 'accepted' status (rider hasn't responded)
-              const currentRequest = await RideRequest.findById(rideRequestId);
-              if (currentRequest && currentRequest.status === 'accepted') {
-                // Timeout reached - cancel the acceptance and notify driver
-                currentRequest.status = 'cancelled';
-                currentRequest.cancelledAt = new Date();
-                currentRequest.cancellationReason = 'Rider did not respond within 15 seconds';
-                await currentRequest.save();
-
-                // Notify driver about timeout
-                const driverSocketId = driverConnections.get(driverId);
-                if (driverSocketId) {
-                  io.to(driverSocketId).emit('fare_response_timeout', {
-                    rideRequestId,
-                    message: 'Rider did not respond within 15 seconds. Request cancelled.',
-                    action: 'timeout'
-                  });
-                  console.log(`⏰ Fare offer timeout for ride request ${rideRequestId} - driver ${driverId} notified`);
-                }
-
-                // Notify rider about timeout
-                emitToUser(io, currentRequest.rider, 'fare_offer_timeout', {
-                  rideRequestId,
-                  message: 'Your response time has expired. Please request a new ride.',
-                  action: 'timeout'
-                });
-              }
-            } catch (timeoutError) {
-              console.error('Error handling fare offer timeout:', timeoutError);
-            }
-          }, 15000); // 15 seconds timeout - FIXED
         } else {
           socket.emit('error', { message: 'Ride request is no longer available' });
         }
@@ -520,7 +477,7 @@ io.on('connection', (socket) => {
   // Handle rider response to fare offer
   socket.on('fare_response', async (data, ack) => {
     try {
-      const { rideRequestId, riderId, action, eventId } = data;
+      const { rideRequestId, riderId, driverId, action, eventId } = data;
       if (isDuplicateEvent(eventId)) {
         if (typeof ack === 'function') ack({ ok: true, duplicate: true, eventId });
         return;
@@ -535,26 +492,29 @@ io.on('connection', (socket) => {
         return;
       }
 
-      // Find the latest fare offer
-      const latestOffer = rideRequest.fareOffers[rideRequest.fareOffers.length - 1];
-      if (!latestOffer || latestOffer.status !== 'pending') {
+      // Pick the intended offer when driverId is provided; otherwise fall back to latest pending.
+      const pendingOffers = (rideRequest.fareOffers || []).filter((offer) => offer.status === 'pending');
+      const targetOffer = driverId
+        ? pendingOffers.find((offer) => offer.driver.toString() === String(driverId))
+        : pendingOffers[pendingOffers.length - 1];
+      if (!targetOffer) {
         socket.emit('error', { message: 'No pending fare offer found' });
         return;
       }
 
       // Update offer status (schema expects 'accepted'/'rejected', not 'accept'/'decline')
-      latestOffer.status = action === 'accept' ? 'accepted' : 'rejected';
-      latestOffer.respondedAt = new Date();
+      targetOffer.status = action === 'accept' ? 'accepted' : 'rejected';
+      targetOffer.respondedAt = new Date();
 
       if (action === 'accept') {
         // Update ride request status
         rideRequest.status = 'accepted';
-        rideRequest.acceptedBy = latestOffer.driver;
+        rideRequest.acceptedBy = targetOffer.driver;
         rideRequest.acceptedAt = new Date();
         
         // Cancel all other pending offers
         rideRequest.fareOffers.forEach(offer => {
-          if (offer._id.toString() !== latestOffer._id.toString() && offer.status === 'pending') {
+          if (offer._id.toString() !== targetOffer._id.toString() && offer.status === 'pending') {
             offer.status = 'rejected';
             offer.respondedAt = new Date();
           }
@@ -564,13 +524,13 @@ io.on('connection', (socket) => {
       await rideRequest.save();
 
       // Notify driver about the response
-      emitToUser(io, latestOffer.driver, 'fare_response', {
+      emitToUser(io, targetOffer.driver, 'fare_response', {
         rideRequestId,
         riderId,
         action,
         timestamp: Date.now()
       });
-      console.log(`💰 Fare response sent to driver ${latestOffer.driver} from rider ${riderId}: ${action}`);
+      console.log(`💰 Fare response sent to driver ${targetOffer.driver} from rider ${riderId}: ${action}`);
 
       // Notify rider about the response
       emitToUser(io, riderId, 'fare_response_confirmed', {
@@ -583,15 +543,15 @@ io.on('connection', (socket) => {
       if (action === 'accept') {
         try {
           const Driver = require('./models/Driver');
-          const driver = await Driver.findById(latestOffer.driver).select(
+          const driver = await Driver.findById(targetOffer.driver).select(
             'firstName lastName phone rating vehicleType vehicleModel vehicleColor vehiclePlateNumber currentLocation'
           );
-          const driverId = latestOffer.driver.toString();
+          const assignedDriverId = targetOffer.driver.toString();
           emitToUser(io, riderId, 'driver_assigned', {
             rideRequestId,
             driver: {
-              _id: driverId,
-              id: driverId,
+              _id: assignedDriverId,
+              id: assignedDriverId,
               firstName: driver ? driver.firstName : 'Driver',
               lastName: driver ? driver.lastName : '',
               phone: driver ? driver.phone : '',

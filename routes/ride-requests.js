@@ -244,7 +244,7 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
     // We must save `availableDrivers` *before* emitting `ride_request`,
     // otherwise a fast driver might call `/respond` before the DB update lands.
     let driversNotified = 0;
-    const emitSocketIds = [];
+    const targetDriverUserIds = new Set();
     for (const driver of nearbyDrivers) {
       // `driver.user` comes from `Driver.findNearbyDrivers()` which may be populated.
       // `RideRequest.availableDrivers.driver` expects a `User` ObjectId, so we must
@@ -281,10 +281,8 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
         viewedAt: new Date()
       });
 
-      if (driverSocketId) {
-        emitSocketIds.push(driverSocketId);
-        driversNotified += 1;
-      }
+      targetDriverUserIds.add(driverUserId);
+      if (driverSocketId) driversNotified += 1;
     }
 
     await rideRequest.save();
@@ -310,9 +308,10 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
     };
 
     // Emit after DB save to ensure `/respond` can find the driver in availableDrivers.
-    for (const socketId of emitSocketIds) {
-      io.to(socketId).emit('ride_request', rideRequestPayload);
-    }
+    // Use room+legacy delivery semantics for reliability across reconnects/multiple sockets.
+    targetDriverUserIds.forEach((driverUserId) => {
+      emitToUserFromApp(req, driverUserId, 'ride_request', rideRequestPayload);
+    });
 
     res.status(201).json({
       message: 'Ride request sent to nearby drivers',
@@ -611,6 +610,60 @@ router.get('/available', authenticateJWT, async (req, res) => {
   }
 });
 
+// Rider updates offered fare while still searching/pending.
+router.patch('/:requestId/fare', authenticateJWT, async (req, res) => {
+  try {
+    const { requestId } = req.params;
+    const { offeredFare } = req.body || {};
+    const numericFare = Number(offeredFare);
+
+    if (req.user.userType !== 'rider') {
+      return res.status(403).json({ error: 'Only riders can update fare' });
+    }
+
+    if (!Number.isFinite(numericFare) || numericFare <= 0) {
+      return res.status(400).json({ error: 'Valid offeredFare is required' });
+    }
+
+    const rideRequest = await RideRequest.findById(requestId);
+    if (!rideRequest) {
+      return res.status(404).json({ error: 'Ride request not found' });
+    }
+
+    if (String(rideRequest.rider) !== String(req.user._id)) {
+      return res.status(403).json({ error: 'Not allowed to update this ride request' });
+    }
+
+    if (!['searching', 'pending'].includes(rideRequest.status)) {
+      return res.status(400).json({ error: 'Cannot update fare after ride is accepted/started' });
+    }
+
+    rideRequest.requestedPrice = numericFare;
+    rideRequest.suggestedPrice = numericFare;
+    await rideRequest.save();
+
+    const payload = {
+      rideRequestId: String(rideRequest._id),
+      requestedPrice: numericFare,
+      offeredFare: numericFare,
+      estimatedFare: numericFare,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const driverIds = collectRelevantDriverIds(rideRequest);
+    driverIds.forEach((driverId) => emitToUserFromApp(req, driverId, 'ride_request_updated', payload));
+
+    res.json({
+      message: 'Fare updated successfully',
+      rideRequestId: String(rideRequest._id),
+      offeredFare: numericFare,
+    });
+  } catch (error) {
+    console.error('Error updating ride request fare:', error);
+    res.status(500).json({ error: 'Failed to update fare' });
+  }
+});
+
 // Driver responds to a ride request
 router.post('/:requestId/respond', authenticateJWT, async (req, res) => {
   try {
@@ -655,58 +708,58 @@ router.post('/:requestId/respond', authenticateJWT, async (req, res) => {
       return res.status(400).json({ error: 'Ride request has expired' });
     }
 
-    // Find driver in available drivers list
-    const driverIndex = rideRequest.availableDrivers.findIndex(
+    // Find driver in available drivers list.
+    // If missing (race/edge case), append a minimal entry so offer/response can proceed.
+    let driverIndex = rideRequest.availableDrivers.findIndex(
       d => d.driver.toString() === req.user._id.toString()
     );
 
     if (driverIndex === -1) {
-      return res.status(400).json({ error: 'Driver not in available drivers list' });
+      rideRequest.availableDrivers.push({
+        driver: req.user._id,
+        status: 'viewed',
+        viewedAt: new Date(),
+      });
+      driverIndex = rideRequest.availableDrivers.length - 1;
     }
 
     const driverResponse = rideRequest.availableDrivers[driverIndex];
 
     switch (actionToUse) {
       case 'accept':
-        // Accept the ride request
-        rideRequest.status = 'accepted';
-        rideRequest.acceptedBy = req.user._id;
+        // Driver "accept" here means "send offer" to rider; final assignment happens on rider acceptance.
         driverResponse.status = 'accepted';
         driverResponse.respondedAt = new Date();
+        if (counterOffer && Number(counterOffer) > 0) {
+          driverResponse.counterOffer = Number(counterOffer);
+        }
 
         await rideRequest.save();
 
-        // Emit WebSocket event to notify rider
-        const io = req.app.get('io');
-        if (io) {
-          const activeConnections = req.app.get('activeConnections');
-          const riderSocketId = activeConnections.get(rideRequest.rider.toString());
-          if (riderSocketId) {
-            io.to(riderSocketId).emit('driver_assigned', {
-              rideRequestId: rideRequest._id,
-              driverId: req.user._id,
-              message: 'Driver has been assigned to your ride'
-            });
-            console.log(`🚗 Notified rider ${rideRequest.rider} about driver assignment`);
-          }
+        const driverProfile = await Driver.findOne({ user: req.user._id })
+          .select('firstName lastName rating vehicleType vehicleModel');
+        const offerFare = (counterOffer && Number(counterOffer) > 0)
+          ? Number(counterOffer)
+          : (rideRequest.requestedPrice || rideRequest.suggestedPrice || 0);
+        const arrivalTime = Math.floor(Math.random() * 10) + 5;
 
-          // Notify all drivers that this request is no longer available
-          const driverConnections = req.app.get('driverConnections');
-
-          driverConnections.forEach((socketId, driverId) => {
-            io.to(socketId).emit('ride_request_status_update', {
-              rideRequestId: rideRequest._id,
-              oldStatus: 'searching',
-              newStatus: 'accepted',
-              message: 'Ride request has been accepted by a driver'
-            });
-          });
-
-          console.log(`📡 Notified all drivers about ride request ${rideRequest._id} acceptance`);
-        }
+        emitToUserFromApp(req, String(rideRequest.rider), 'fare_offer', {
+          rideRequestId: String(rideRequest._id),
+          driverId: String(req.user._id),
+          driverName: driverProfile
+            ? `${driverProfile.firstName || ''} ${driverProfile.lastName || ''}`.trim() || 'Driver'
+            : 'Driver',
+          driverRating: driverProfile ? (driverProfile.rating ?? 0) : 0,
+          fareAmount: offerFare,
+          arrivalTime,
+          vehicleInfo: driverProfile
+            ? `${driverProfile.vehicleType || ''} ${driverProfile.vehicleModel || ''}`.trim() || 'Vehicle'
+            : 'Vehicle',
+          timestamp: Date.now(),
+        });
 
         res.json({
-          message: 'Ride request accepted successfully',
+          message: 'Offer sent to rider successfully',
           rideRequest: {
             id: rideRequest._id,
             status: rideRequest.status,
