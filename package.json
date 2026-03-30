@@ -19,6 +19,8 @@
     "e2e:multi-request:remote": "node test-multi-request-fare-offers-e2e.js",
     "e2e:cancel-recreate": "node run-e2e-cancel-recreate-local.js",
     "e2e:cancel-recreate:remote": "node test-cancel-recreate-driver-visibility-e2e.js",
+    "e2e:rider-arrived": "node run-e2e-rider-arrived-local.js",
+    "e2e:rider-arrived:remote": "node test-rider-arrived-persistence-e2e.js",
     "e2e:all-critical": "node run-e2e-all-critical-local.js"
   },
   "keywords": [

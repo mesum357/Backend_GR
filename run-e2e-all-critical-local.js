@@ -4,6 +4,7 @@ const { spawnSync } = require('child_process');
 const steps = [
   { name: 'cancel-recreate', cmd: 'npm', args: ['run', 'e2e:cancel-recreate'] },
   { name: 'multi-request', cmd: 'npm', args: ['run', 'e2e:multi-request'] },
+  { name: 'rider-arrived-persistence', cmd: 'npm', args: ['run', 'e2e:rider-arrived'] },
 ];
 
 for (const step of steps) {
