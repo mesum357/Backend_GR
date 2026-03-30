@@ -397,11 +397,13 @@ router.get('/:id/status', authenticateJWT, async (req, res) => {
         expiresAt: rideRequest.expiresAt,
         createdAt: rideRequest.createdAt,
         acceptedBy: rideRequest.acceptedBy,
+        riderArrivedAt: rideRequest.riderArrivedAt,
         availableDrivers: rideRequest.availableDrivers,
       },
       id: rideRequest._id,
       status: rideRequest.status,
       acceptedBy: rideRequest.acceptedBy,
+      riderArrivedAt: rideRequest.riderArrivedAt,
       requestedPrice: rideRequest.requestedPrice,
       expiresAt: rideRequest.expiresAt,
     });

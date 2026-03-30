@@ -49,6 +49,10 @@ const rideRequestSchema = new mongoose.Schema({
   cancelledAt: {
     type: Date,
   },
+  // Rider confirmed arrival at pickup (used to persist progress when reopening UI)
+  riderArrivedAt: {
+    type: Date,
+  },
   
   // Driver who accepted (if any)
   acceptedBy: {

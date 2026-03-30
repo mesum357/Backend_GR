@@ -661,6 +661,10 @@ io.on('connection', (socket) => {
       }
       // Notify the driver that rider is at pickup
       const assignedDriverId = (rideRequest.acceptedBy || '').toString();
+      if (!rideRequest.riderArrivedAt) {
+        rideRequest.riderArrivedAt = new Date();
+        await rideRequest.save();
+      }
       const driverSocketId = driverConnections.get(assignedDriverId);
       if (driverSocketId) {
         const payload = { rideRequestId, riderId };
