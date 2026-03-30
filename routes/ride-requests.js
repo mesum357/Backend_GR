@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const REQUEST_EXPIRY_MS = 72 * 1000; // 1.2 minutes
 const RideRequest = require('../models/RideRequest');
 const User = require('../models/User');
 const Driver = require('../models/Driver');
@@ -221,7 +222,7 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
       vehicleType,
       paymentMethod: normalizedPaymentMethod,
       requestRadius: radiusMeters / 1000, // Convert meters to km
-      expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes
+      expiresAt: new Date(Date.now() + REQUEST_EXPIRY_MS), // 1.2 minutes
       status: 'searching'
     });
 

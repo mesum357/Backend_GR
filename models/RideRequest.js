@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const REQUEST_EXPIRY_MS = 72 * 1000; // 1.2 minutes
 
 const rideRequestSchema = new mongoose.Schema({
   // Rider information
@@ -170,8 +171,8 @@ rideRequestSchema.methods.deg2rad = function(deg) {
 rideRequestSchema.statics.createRequest = async function(rideData) {
   const request = new this(rideData);
   
-  // Set expiration time (15 minutes from now)
-  request.expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+  // Set expiration time (1.2 minutes from now)
+  request.expiresAt = new Date(Date.now() + REQUEST_EXPIRY_MS);
   
   // Calculate distance
   request.distance = request.calculateDistance(
