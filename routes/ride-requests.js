@@ -719,7 +719,6 @@ router.post('/:requestId/respond', authenticateJWT, async (req, res) => {
       rideRequest.availableDrivers.push({
         driver: req.user._id,
         status: 'viewed',
-        viewedAt: new Date(),
       });
       driverIndex = rideRequest.availableDrivers.length - 1;
     }
