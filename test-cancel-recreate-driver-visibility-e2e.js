@@ -152,6 +152,13 @@ async function run() {
     const ids = (avail.data?.rideRequests || []).map((r) => String(r.id || r._id));
     ok('Driver dashboard API includes recreated request', ids.includes(ride2), JSON.stringify(ids));
     ok('Driver dashboard API excludes cancelled request', !ids.includes(ride1), JSON.stringify(ids));
+
+    // Regression guard: ensure driver can still respond to the recreated request.
+    const respond2 = await http('POST', `${BASE_URL}/api/ride-requests/${ride2}/respond`, driver.token, {
+      action: 'counter_offer',
+      counterOffer: 225,
+    });
+    ok('Driver can respond to recreated request (counter offer)', respond2.ok, JSON.stringify(respond2.data));
   } catch (e) {
     ok('Unhandled test error', false, e.message);
   } finally {
