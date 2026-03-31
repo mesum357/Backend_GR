@@ -141,6 +141,11 @@ async function run() {
     const rideId = String(req.data?.rideRequest?.id || '');
     ok('Ride request created', req.status === 201 && !!rideId, JSON.stringify(req.data));
 
+    const initialStatus = await http('GET', `${BASE_URL}/api/ride-requests/${rideId}/status`, rider.token);
+    const initialAvailableDrivers = initialStatus.data?.rideRequest?.availableDrivers || [];
+    const initialViewedCount = initialAvailableDrivers.filter((d) => !!d?.viewedAt).length;
+    ok('Initial viewed count is zero before any driver opens modal', initialViewedCount === 0, `initialViewed=${initialViewedCount}`);
+
     const view1P = waitEvent(
       riderSocket,
       'ride_request_viewed',
@@ -172,7 +177,7 @@ async function run() {
     await sleep(500);
     const status = await http('GET', `${BASE_URL}/api/ride-requests/${rideId}/status`, rider.token);
     const availableDrivers = status.data?.rideRequest?.availableDrivers || [];
-    const viewedCountFromStatus = availableDrivers.filter((d) => !!d?.viewedAt || d?.status === 'viewed').length;
+    const viewedCountFromStatus = availableDrivers.filter((d) => !!d?.viewedAt).length;
     ok('Status API reflects two viewed drivers', viewedCountFromStatus >= 2, `viewed=${viewedCountFromStatus}`);
   } catch (e) {
     ok('Unhandled test error', false, e.message);

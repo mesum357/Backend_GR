@@ -116,8 +116,7 @@ router.post('/create', authenticateJWT, async (req, res) => {
       rideRequest.availableDrivers.push({
         driver: driver._id,
         distance,
-        estimatedTime,
-        viewedAt: new Date()
+        estimatedTime
       });
     }
 
@@ -278,8 +277,7 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
           pickup.longitude,
           (driver.currentLocation || driver.location).coordinates[1],
           (driver.currentLocation || driver.location).coordinates[0]
-        ) * 2),
-        viewedAt: new Date()
+        ) * 2)
       });
 
       targetDriverUserIds.add(driverUserId);
