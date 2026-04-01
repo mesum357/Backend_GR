@@ -98,6 +98,7 @@ const adminDriverRequestsRoutes = require('./routes/admin-driver-requests');
 const adminAuthRoutes = require('./routes/admin-auth');
 const adminDeleteRoutes = require('./routes/admin-delete');
 const adminWalletTopupsRoutes = require('./routes/admin-wallet-topups');
+const adminSidebarStatsRoutes = require('./routes/admin-sidebar-stats');
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -114,6 +115,7 @@ app.use('/api/admin', adminDriverRequestsRoutes);
 app.use('/api/admin', adminAuthRoutes);
 app.use('/api/admin', adminDeleteRoutes);
 app.use('/api/admin', adminWalletTopupsRoutes);
+app.use('/api/admin', adminSidebarStatsRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
