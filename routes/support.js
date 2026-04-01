@@ -19,6 +19,20 @@ function roleFromUser(user) {
   return t === 'driver' ? 'driver' : 'rider';
 }
 
+/** Whether any ticket has an unread admin reply (for profile / badges) */
+router.get('/unread', authenticateJWT, async (req, res) => {
+  try {
+    const count = await SupportTicket.countDocuments({
+      user: req.user.id,
+      unreadForUser: true,
+    });
+    return res.json({ hasUnread: count > 0, count });
+  } catch (err) {
+    console.error('support unread error:', err);
+    return res.status(500).json({ error: 'Failed to load unread state' });
+  }
+});
+
 /** Active ticket (open or answered) for current user, with recent messages */
 router.get('/active', authenticateJWT, async (req, res) => {
   try {
@@ -32,6 +46,12 @@ router.get('/active', authenticateJWT, async (req, res) => {
     if (!ticket) {
       return res.json({ ticket: null, messages: [] });
     }
+
+    await SupportTicket.updateOne(
+      { _id: ticket._id, user: req.user.id },
+      { $set: { unreadForUser: false } }
+    );
+    ticket.unreadForUser = false;
 
     const messages = await SupportMessage.find({ ticket: ticket._id })
       .sort({ createdAt: 1 })
@@ -130,7 +150,12 @@ router.get('/tickets/:ticketId/messages', authenticateJWT, async (req, res) => {
       return res.status(404).json({ error: 'Ticket not found' });
     }
     const messages = await SupportMessage.find({ ticket: ticket._id }).sort({ createdAt: 1 }).limit(500).lean();
-    return res.json({ ticket, messages });
+    await SupportTicket.updateOne(
+      { _id: ticket._id, user: req.user.id },
+      { $set: { unreadForUser: false } }
+    );
+    const ticketOut = { ...ticket, unreadForUser: false };
+    return res.json({ ticket: ticketOut, messages });
   } catch (err) {
     console.error('support list messages error:', err);
     return res.status(500).json({ error: 'Failed to load messages' });
@@ -155,6 +180,7 @@ router.post('/tickets/:ticketId/messages', authenticateJWT, async (req, res) => 
     await row.save();
     ticket.lastMessageAt = new Date();
     ticket.status = 'open';
+    ticket.unreadForUser = false;
     await ticket.save();
 
     const messages = await SupportMessage.find({ ticket: ticket._id }).sort({ createdAt: 1 }).lean();

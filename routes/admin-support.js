@@ -54,6 +54,7 @@ router.post('/support/tickets/:ticketId/messages', authenticateAdminJWT, async (
     await row.save();
     ticket.lastMessageAt = new Date();
     ticket.status = 'answered';
+    ticket.unreadForUser = true;
     await ticket.save();
 
     const messages = await SupportMessage.find({ ticket: ticket._id }).sort({ createdAt: 1 }).lean();

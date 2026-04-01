@@ -42,6 +42,8 @@ const supportTicketSchema = new mongoose.Schema(
       index: true,
     },
     lastMessageAt: { type: Date, default: Date.now },
+    /** True after admin replies; cleared when the user opens the thread (GET messages / active) or sends a message */
+    unreadForUser: { type: Boolean, default: false, index: true },
   },
   { timestamps: true }
 );
