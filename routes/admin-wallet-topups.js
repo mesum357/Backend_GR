@@ -2,8 +2,32 @@ const express = require('express');
 const DriverWalletTransaction = require('../models/DriverWalletTransaction');
 const Driver = require('../models/Driver');
 const { authenticateAdminJWT } = require('../middleware/admin-auth');
+const { getDriverMinimumWalletPkr, setDriverMinimumWalletPkr } = require('../lib/walletSettings');
 
 const router = express.Router();
+
+/** Wallet policy: minimum PKR balance for drivers to accept rides */
+router.get('/wallet/settings', authenticateAdminJWT, async (req, res) => {
+  try {
+    const driverMinimumWalletPkr = await getDriverMinimumWalletPkr();
+    return res.json({ driverMinimumWalletPkr });
+  } catch (err) {
+    console.error('Get wallet settings error:', err);
+    return res.status(500).json({ error: 'Failed to load wallet settings' });
+  }
+});
+
+router.patch('/wallet/settings', authenticateAdminJWT, async (req, res) => {
+  try {
+    const { driverMinimumWalletPkr } = req.body || {};
+    const value = await setDriverMinimumWalletPkr(driverMinimumWalletPkr);
+    return res.json({ driverMinimumWalletPkr: value });
+  } catch (err) {
+    const code = err.statusCode || 500;
+    console.error('Update wallet settings error:', err);
+    return res.status(code).json({ error: err.message || 'Failed to update wallet settings' });
+  }
+});
 
 /** List cash-in (top-up) requests for admin */
 router.get('/wallet/top-up-requests', authenticateAdminJWT, async (req, res) => {

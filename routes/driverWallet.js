@@ -3,9 +3,7 @@ const router = express.Router();
 const Driver = require('../models/Driver');
 const DriverWalletTransaction = require('../models/DriverWalletTransaction');
 const { authenticateJWT } = require('../middleware/auth');
-
-// Constants
-const MINIMUM_BALANCE = 500; // PKR
+const { getDriverMinimumWalletPkr } = require('../lib/walletSettings');
 const EASYPAISA_DETAILS = {
   accountNumber: '03001234567',
   accountHolder: 'Tourist Rides',
@@ -41,11 +39,12 @@ router.get('/balance', authenticateJWT, async (req, res) => {
       return row;
     });
 
+    const minimumBalance = await getDriverMinimumWalletPkr();
     res.json({
       balance: driver.wallet.balance,
       currency: driver.wallet.currency,
-      minimumBalance: MINIMUM_BALANCE,
-      canAcceptRides: driver.wallet.balance >= MINIMUM_BALANCE,
+      minimumBalance,
+      canAcceptRides: driver.wallet.balance >= minimumBalance,
       lastTransactionAt: driver.wallet.lastTransactionAt,
       recentTransactions: sanitized,
     });
@@ -180,12 +179,13 @@ router.post('/cash-out', authenticateJWT, async (req, res) => {
     }
 
     // Check if remaining balance will be above minimum (for active drivers)
+    const minimumBalance = await getDriverMinimumWalletPkr();
     const remainingBalance = driver.wallet.balance - amount;
-    if (remainingBalance < MINIMUM_BALANCE) {
+    if (remainingBalance < minimumBalance) {
       return res.status(400).json({ 
-        message: `Cannot cash out. Minimum balance of ${MINIMUM_BALANCE} PKR must be maintained`,
+        message: `Cannot cash out. Minimum balance of ${minimumBalance} PKR must be maintained`,
         currentBalance: driver.wallet.balance,
-        minimumBalance: MINIMUM_BALANCE
+        minimumBalance
       });
     }
 
@@ -268,15 +268,16 @@ router.get('/can-accept-rides', authenticateJWT, async (req, res) => {
       return res.status(404).json({ message: 'Driver profile not found' });
     }
 
-    const canAcceptRides = driver.wallet.balance >= MINIMUM_BALANCE;
+    const minimumBalance = await getDriverMinimumWalletPkr();
+    const canAcceptRides = driver.wallet.balance >= minimumBalance;
     
     res.json({
       canAcceptRides,
       currentBalance: driver.wallet.balance,
-      minimumBalance: MINIMUM_BALANCE,
+      minimumBalance,
       message: canAcceptRides 
         ? 'Driver can accept rides' 
-        : `Minimum balance of ${MINIMUM_BALANCE} PKR required to accept rides`
+        : `Minimum balance of ${minimumBalance} PKR required to accept rides`
     });
   } catch (error) {
     console.error('Error checking ride acceptance status:', error);
