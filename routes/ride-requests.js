@@ -5,6 +5,7 @@ const RideRequest = require('../models/RideRequest');
 const User = require('../models/User');
 const Driver = require('../models/Driver');
 const { authenticateJWT } = require('../middleware/auth');
+const { buildDriverFareOfferEnrichment } = require('../utils/driverFareOfferEnrichment');
 
 /** Same delivery semantics as server.js emitToUser (user room + legacy socket id). */
 function emitToUserFromApp(req, userId, event, payload) {
@@ -787,8 +788,7 @@ router.post('/:requestId/respond', authenticateJWT, async (req, res) => {
 
         await rideRequest.save();
 
-        const driverProfile = await Driver.findOne({ user: req.user._id })
-          .select('firstName lastName rating vehicleType vehicleModel');
+        const enriched = await buildDriverFareOfferEnrichment(req.user._id);
         const offerFare = (counterOffer && Number(counterOffer) > 0)
           ? Number(counterOffer)
           : (rideRequest.requestedPrice || rideRequest.suggestedPrice || 0);
@@ -797,15 +797,13 @@ router.post('/:requestId/respond', authenticateJWT, async (req, res) => {
         emitToUserFromApp(req, String(rideRequest.rider), 'fare_offer', {
           rideRequestId: String(rideRequest._id),
           driverId: String(req.user._id),
-          driverName: driverProfile
-            ? `${driverProfile.firstName || ''} ${driverProfile.lastName || ''}`.trim() || 'Driver'
-            : 'Driver',
-          driverRating: driverProfile ? (driverProfile.rating ?? 0) : 0,
+          driverName: enriched.driverName,
+          driverRating: enriched.driverRating,
           fareAmount: offerFare,
           arrivalTime,
-          vehicleInfo: driverProfile
-            ? `${driverProfile.vehicleType || ''} ${driverProfile.vehicleModel || ''}`.trim() || 'Vehicle'
-            : 'Vehicle',
+          vehicleInfo: enriched.vehicleInfo,
+          vehicleName: enriched.vehicleName,
+          driverPhoto: enriched.driverPhoto,
           timestamp: Date.now(),
         });
 

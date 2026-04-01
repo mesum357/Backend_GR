@@ -204,6 +204,8 @@ const emitToUser = (io, userId, event, payload) => {
   if (sid) io.to(sid).emit(event, payload);
 };
 
+const { buildDriverFareOfferEnrichment } = require('./utils/driverFareOfferEnrichment');
+
 // Socket.IO connection handling
 io.on('connection', (socket) => {
   console.log(`🔌 New connection: ${socket.id}`);
@@ -256,23 +258,29 @@ io.on('connection', (socket) => {
           }
           await rideRequest.save();
 
-          // Get driver information for the offer
-          const Driver = require('./models/Driver');
-          const driver = await Driver.findById(driverId).select('firstName lastName rating vehicleType vehicleModel');
-          
+          const enriched = await buildDriverFareOfferEnrichment(driverId);
+
           // Calculate arrival time (mock calculation - in real app, use actual distance/time)
           const arrivalTime = Math.floor(Math.random() * 10) + 5; // 5-15 minutes
-          
+
+          const fareAmount =
+            (counterOffer != null && Number(counterOffer) > 0 && Number(counterOffer)) ||
+            rideRequest.requestedPrice ||
+            rideRequest.suggestedPrice ||
+            0;
+
           // Notify rider with fare offer (user room — not raw socket id)
           emitToUser(io, rideRequest.rider, 'fare_offer', {
             rideRequestId,
             driverId,
-            driverName: driver ? `${driver.firstName} ${driver.lastName}` : 'Driver',
-            driverRating: driver ? (driver.rating ?? 0) : 0,
-            fareAmount: counterOffer || rideRequest.offeredFare,
-            arrivalTime: arrivalTime,
-            vehicleInfo: driver ? `${driver.vehicleType} ${driver.vehicleModel}` : 'Vehicle',
-            timestamp: Date.now()
+            driverName: enriched.driverName,
+            driverRating: enriched.driverRating,
+            fareAmount,
+            arrivalTime,
+            vehicleInfo: enriched.vehicleInfo,
+            vehicleName: enriched.vehicleName,
+            driverPhoto: enriched.driverPhoto,
+            timestamp: Date.now(),
           });
           console.log(`💰 Fare offer sent to rider ${rideRequest.rider} from driver ${driverId}`);
 
@@ -316,7 +324,7 @@ io.on('connection', (socket) => {
   socket.on('fare_offer', async (data) => {
     try {
       const { rideRequestId, driverId, driverName, driverRating, fareAmount, arrivalTime, vehicleInfo } = data;
-      
+
       // Find the ride request
       const RideRequest = require('./models/RideRequest');
       const rideRequest = await RideRequest.findById(rideRequestId);
@@ -326,14 +334,21 @@ io.on('connection', (socket) => {
         return;
       }
 
+      const enriched = await buildDriverFareOfferEnrichment(driverId);
+      const offerPayload = {
+        driverName: enriched.driverName || driverName || 'Driver',
+        driverRating: enriched.driverRating ?? driverRating ?? 0,
+        fareAmount,
+        arrivalTime,
+        vehicleInfo: enriched.vehicleInfo || vehicleInfo || 'Vehicle',
+        vehicleName: enriched.vehicleName || '',
+        driverPhoto: enriched.driverPhoto || '',
+      };
+
       // Add fare offer to ride request
       rideRequest.fareOffers.push({
         driver: driverId,
-        driverName,
-        driverRating,
-        fareAmount,
-        arrivalTime,
-        vehicleInfo,
+        ...offerPayload,
         offeredAt: new Date(),
         status: 'pending'
       });
@@ -344,11 +359,8 @@ io.on('connection', (socket) => {
       emitToUser(io, rideRequest.rider, 'fare_offer', {
         rideRequestId,
         driverId,
-        driverName,
-        driverRating,
-        fareAmount,
-        arrivalTime,
-        vehicleInfo
+        ...offerPayload,
+        timestamp: Date.now(),
       });
       console.log(`💰 Fare offer sent to rider ${rideRequest.rider} from driver ${driverId}`);
 

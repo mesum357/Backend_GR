@@ -84,6 +84,8 @@ const rideRequestSchema = new mongoose.Schema({
     fareAmount: { type: Number, required: true },
     arrivalTime: { type: Number, required: true }, // in minutes
     vehicleInfo: { type: String, default: 'Standard Vehicle' },
+    vehicleName: { type: String, default: '' },
+    driverPhoto: { type: String, default: '' },
     offeredAt: { type: Date, default: Date.now },
     respondedAt: { type: Date },
     status: {
