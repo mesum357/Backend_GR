@@ -65,5 +65,23 @@ router.patch('/driver-requests/:driverId/reject', authenticateAdminJWT, async (r
   }
 });
 
+/** Remove driver profile from admin list only — keeps User account (set to rider so login still works). */
+router.delete('/driver-requests/:driverId', authenticateAdminJWT, async (req, res) => {
+  try {
+    const { driverId } = req.params;
+    const driver = await Driver.findById(driverId);
+    if (!driver) return res.status(404).json({ error: 'Driver request not found' });
+
+    const userId = driver.user;
+    await Driver.findByIdAndDelete(driverId);
+    await User.findByIdAndUpdate(userId, { userType: 'rider' });
+
+    return res.json({ message: 'Driver request removed', driverId });
+  } catch (err) {
+    console.error('Error removing driver request:', err);
+    return res.status(500).json({ error: 'Failed to remove driver request' });
+  }
+});
+
 module.exports = router;
 
