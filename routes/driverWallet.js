@@ -20,13 +20,26 @@ router.get('/balance', authenticateJWT, async (req, res) => {
       return res.status(404).json({ message: 'Driver profile not found' });
     }
 
-    // Get recent transactions
-    const recentTransactions = await DriverWalletTransaction.find({ 
-      driverId: req.user.id 
+    // Get recent transactions (omit large proof images in list)
+    const recentTransactions = await DriverWalletTransaction.find({
+      driverId: req.user.id
     })
-    .sort({ createdAt: -1 })
-    .limit(10)
-    .select('transactionType amount status paymentMethod description createdAt updatedAt');
+      .sort({ createdAt: -1 })
+      .limit(15)
+      .select('transactionType amount status paymentMethod paymentDetails description createdAt updatedAt')
+      .lean();
+
+    const sanitized = recentTransactions.map((t) => {
+      const row = { ...t };
+      if (row.paymentDetails && row.paymentDetails.proofImage) {
+        row.paymentDetails = {
+          ...row.paymentDetails,
+          proofImage: undefined,
+          hasProofImage: true,
+        };
+      }
+      return row;
+    });
 
     res.json({
       balance: driver.wallet.balance,
@@ -34,7 +47,7 @@ router.get('/balance', authenticateJWT, async (req, res) => {
       minimumBalance: MINIMUM_BALANCE,
       canAcceptRides: driver.wallet.balance >= MINIMUM_BALANCE,
       lastTransactionAt: driver.wallet.lastTransactionAt,
-      recentTransactions
+      recentTransactions: sanitized,
     });
   } catch (error) {
     console.error('Error fetching wallet balance:', error);
@@ -69,10 +82,10 @@ router.get('/payment-details', authenticateJWT, async (req, res) => {
   }
 });
 
-// Cash In request
+// Cash In request (top-up)
 router.post('/cash-in', authenticateJWT, async (req, res) => {
   try {
-    const { amount, transactionId, paymentMethod = 'easypaisa' } = req.body;
+    const { amount, transactionId, paymentMethod = 'easypaisa', senderName, screenshot } = req.body;
 
     // Validation
     if (!amount || amount < 100) {
@@ -81,8 +94,14 @@ router.post('/cash-in', authenticateJWT, async (req, res) => {
     if (amount > 50000) {
       return res.status(400).json({ message: 'Maximum cash in amount is 50,000 PKR' });
     }
-    if (!transactionId) {
+    if (!transactionId || !String(transactionId).trim()) {
       return res.status(400).json({ message: 'Transaction ID is required' });
+    }
+    if (!senderName || !String(senderName).trim()) {
+      return res.status(400).json({ message: 'Sender name is required' });
+    }
+    if (!screenshot || !String(screenshot).trim()) {
+      return res.status(400).json({ message: 'Payment screenshot is required' });
     }
 
     const driver = await Driver.findOne({ user: req.user.id });
@@ -92,7 +111,7 @@ router.post('/cash-in', authenticateJWT, async (req, res) => {
 
     // Check if transaction ID already exists
     const existingTransaction = await DriverWalletTransaction.findOne({
-      'paymentDetails.transactionId': transactionId,
+      'paymentDetails.transactionId': String(transactionId).trim(),
       transactionType: 'cash_in'
     });
     if (existingTransaction) {
@@ -103,15 +122,17 @@ router.post('/cash-in', authenticateJWT, async (req, res) => {
     const transaction = new DriverWalletTransaction({
       driverId: req.user.id,
       transactionType: 'cash_in',
-      amount: amount,
+      amount: Number(amount),
       status: 'pending',
       paymentMethod: paymentMethod,
       paymentDetails: {
-        transactionId: transactionId,
+        transactionId: String(transactionId).trim(),
         accountNumber: EASYPAISA_DETAILS.accountNumber,
-        accountHolder: EASYPAISA_DETAILS.accountHolder
+        accountHolder: EASYPAISA_DETAILS.accountHolder,
+        senderName: String(senderName).trim(),
+        proofImage: String(screenshot).trim(),
       },
-      description: `Cash in request via ${paymentMethod.toUpperCase()}`
+      description: `Top-up request via ${String(paymentMethod).toUpperCase()}`
     });
 
     await transaction.save();

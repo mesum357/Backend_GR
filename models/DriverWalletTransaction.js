@@ -33,7 +33,11 @@ const driverWalletTransactionSchema = new mongoose.Schema({
     accountNumber: String,
     accountHolder: String,
     transactionId: String,
-    reference: String
+    reference: String,
+    /** Depositor / sender name (driver-entered on top-up form) */
+    senderName: String,
+    /** Base64 data URI or URL of payment screenshot */
+    proofImage: String,
   },
   description: {
     type: String,
