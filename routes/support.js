@@ -107,6 +107,22 @@ router.post('/tickets', authenticateJWT, async (req, res) => {
   }
 });
 
+/** List all tickets for the current user (newest first) */
+router.get('/tickets', authenticateJWT, async (req, res) => {
+  try {
+    const tickets = await SupportTicket.find({ user: req.user.id })
+      .sort({ updatedAt: -1 })
+      .limit(100)
+      .select('ticketRef issueCategory title displayName userRole status lastMessageAt createdAt updatedAt')
+      .lean();
+
+    return res.json({ tickets });
+  } catch (err) {
+    console.error('support list tickets error:', err);
+    return res.status(500).json({ error: 'Failed to list tickets' });
+  }
+});
+
 router.get('/tickets/:ticketId/messages', authenticateJWT, async (req, res) => {
   try {
     const ticket = await SupportTicket.findById(req.params.ticketId).lean();
