@@ -50,6 +50,9 @@ const driverSchema = new mongoose.Schema({
 
   // Driver documents and verification
   licenseNumber: { type: String, required: true, unique: true },
+  licenseImage: { type: String, default: null },
+  cnicFrontImage: { type: String, default: null },
+  cnicBackImage: { type: String, default: null },
   licenseExpiry: { type: Date, required: true },
   insuranceNumber: { type: String, required: true },
   insuranceExpiry: { type: Date, required: true },
