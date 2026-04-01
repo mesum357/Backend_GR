@@ -101,6 +101,8 @@ const adminWalletTopupsRoutes = require('./routes/admin-wallet-topups');
 const adminSidebarStatsRoutes = require('./routes/admin-sidebar-stats');
 const supportRoutes = require('./routes/support');
 const adminSupportRoutes = require('./routes/admin-support');
+const rideFaresRoutes = require('./routes/ride-fares');
+const adminRideFaresRoutes = require('./routes/admin-ride-fares');
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -120,6 +122,8 @@ app.use('/api/admin', adminWalletTopupsRoutes);
 app.use('/api/admin', adminSidebarStatsRoutes);
 app.use('/api/admin', adminSupportRoutes);
 app.use('/api/support', supportRoutes);
+app.use('/api/ride-fares', rideFaresRoutes);
+app.use('/api/admin', adminRideFaresRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

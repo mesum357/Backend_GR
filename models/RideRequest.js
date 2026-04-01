@@ -185,10 +185,8 @@ rideRequestSchema.statics.createRequest = async function(rideData) {
   // Calculate estimated duration (assuming 30 km/h average speed)
   request.estimatedDuration = Math.round(request.distance * 2); // 2 minutes per km
   
-  // Calculate suggested price (base fare + distance fare)
-  const baseFare = 50; // PKR base fare
-  const perKmFare = 25; // PKR per kilometer
-  request.suggestedPrice = Math.round(baseFare + (request.distance * perKmFare));
+  const { getSuggestedPrice } = require('../utils/rideFarePricing');
+  request.suggestedPrice = await getSuggestedPrice(request.distance, request.vehicleType);
   
   // If no requested price, use suggested price
   if (!request.requestedPrice) {
