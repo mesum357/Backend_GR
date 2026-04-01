@@ -1,11 +1,12 @@
 const express = require('express');
 const Driver = require('../models/Driver');
 const User = require('../models/User');
+const { authenticateAdminJWT } = require('../middleware/admin-auth');
 
 const router = express.Router();
 
 // List driver requests
-router.get('/driver-requests', async (req, res) => {
+router.get('/driver-requests', authenticateAdminJWT, async (req, res) => {
   try {
     const status = String(req.query.status || 'pending'); // pending|approved|rejected|all
     const query = {};
@@ -25,7 +26,7 @@ router.get('/driver-requests', async (req, res) => {
   }
 });
 
-router.patch('/driver-requests/:driverId/approve', async (req, res) => {
+router.patch('/driver-requests/:driverId/approve', authenticateAdminJWT, async (req, res) => {
   try {
     const { driverId } = req.params;
     const driver = await Driver.findById(driverId);
@@ -45,7 +46,7 @@ router.patch('/driver-requests/:driverId/approve', async (req, res) => {
   }
 });
 
-router.patch('/driver-requests/:driverId/reject', async (req, res) => {
+router.patch('/driver-requests/:driverId/reject', authenticateAdminJWT, async (req, res) => {
   try {
     const { driverId } = req.params;
     const { reason } = req.body || {};

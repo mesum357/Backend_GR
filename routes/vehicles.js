@@ -1,5 +1,6 @@
 const express = require('express');
 const Vehicle = require('../models/Vehicle');
+const { authenticateAdminJWT } = require('../middleware/admin-auth');
 
 const router = express.Router();
 
@@ -17,7 +18,7 @@ router.get('/', async (req, res) => {
 });
 
 // Create vehicle (used from Admin panel)
-router.post('/', async (req, res) => {
+router.post('/', authenticateAdminJWT, async (req, res) => {
   try {
     const { name, rideType, isActive } = req.body || {};
     if (!name || typeof name !== 'string') {
@@ -44,7 +45,7 @@ router.post('/', async (req, res) => {
 });
 
 // Update vehicle
-router.put('/:id', async (req, res) => {
+router.put('/:id', authenticateAdminJWT, async (req, res) => {
   try {
     const { id } = req.params;
     const updates = {};
@@ -65,7 +66,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // Delete vehicle
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', authenticateAdminJWT, async (req, res) => {
   try {
     const { id } = req.params;
     const deleted = await Vehicle.findByIdAndDelete(id);

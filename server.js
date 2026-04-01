@@ -95,6 +95,7 @@ const driverWalletRoutes = require('./routes/driverWallet');
 const fareOfferRoutes = require('./routes/fare-offers');
 const vehicleRoutes = require('./routes/vehicles');
 const adminDriverRequestsRoutes = require('./routes/admin-driver-requests');
+const adminAuthRoutes = require('./routes/admin-auth');
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -108,6 +109,7 @@ app.use('/api/driver/wallet', driverWalletRoutes);
 app.use('/api/fare-offers', fareOfferRoutes);
 app.use('/api/vehicles', vehicleRoutes);
 app.use('/api/admin', adminDriverRequestsRoutes);
+app.use('/api/admin', adminAuthRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

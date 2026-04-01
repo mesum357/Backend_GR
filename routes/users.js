@@ -3,6 +3,19 @@ const User = require('../models/User');
 const { authenticateJWT } = require('../middleware/auth');
 const router = express.Router();
 
+// Public: list riders (for admin UI without auth)
+router.get('/public/riders', async (req, res) => {
+  try {
+    const riders = await User.find({ userType: 'rider' })
+      .select('firstName lastName phone email userType isVerified totalRides createdAt')
+      .sort({ createdAt: -1 });
+    return res.json({ users: riders });
+  } catch (error) {
+    console.error('Get public riders error:', error);
+    return res.status(500).json({ error: 'Failed to get riders' });
+  }
+});
+
 // Get all users (admin only)
 router.get('/', authenticateJWT, async (req, res) => {
   try {
