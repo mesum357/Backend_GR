@@ -52,7 +52,7 @@ app.use((req, res, next) => {
   }
   next();
 });
-app.use(express.json({ limit: '256kb' }));
+app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // Session configuration (only for web clients, not React Native)
@@ -93,6 +93,8 @@ const rideRequestRoutes = require('./routes/ride-requests');
 const firebaseAuthRoutes = require('./routes/firebase-auth');
 const driverWalletRoutes = require('./routes/driverWallet');
 const fareOfferRoutes = require('./routes/fare-offers');
+const vehicleRoutes = require('./routes/vehicles');
+const adminDriverRequestsRoutes = require('./routes/admin-driver-requests');
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -104,6 +106,8 @@ app.use('/api/ride-requests', rideRequestRoutes);
 app.use('/api/firebase-auth', firebaseAuthRoutes);
 app.use('/api/driver/wallet', driverWalletRoutes);
 app.use('/api/fare-offers', fareOfferRoutes);
+app.use('/api/vehicles', vehicleRoutes);
+app.use('/api/admin', adminDriverRequestsRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

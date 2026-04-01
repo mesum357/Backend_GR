@@ -8,7 +8,7 @@ const router = express.Router();
 // Register new user
 router.post('/register', async (req, res) => {
   try {
-    const { email, password, firstName, lastName, phone, userType, driverInfo } = req.body;
+    const { email, password, firstName, lastName, phone, userType, driverInfo, profileImage } = req.body;
 
     // Check if user already exists
     const existingUser = await User.findOne({ 
@@ -28,7 +28,8 @@ router.post('/register', async (req, res) => {
       firstName,
       lastName,
       phone,
-      userType: userType || 'rider'
+      userType: userType || 'rider',
+      profileImage: profileImage || null,
     });
 
     await user.save();
@@ -49,9 +50,10 @@ router.post('/register', async (req, res) => {
             type: 'Point',
             coordinates: [74.3144, 35.9208] // Default to Gilgit City Center
           },
-          isOnline: true,
-          isAvailable: true,
-          isApproved: true // Auto-approve for development
+          isOnline: false,
+          isAvailable: false,
+          isApproved: false,
+          approvalStatus: 'pending',
         };
 
         console.log('Creating driver profile with data:', driverData);
@@ -73,7 +75,9 @@ router.post('/register', async (req, res) => {
     const token = generateToken(user);
 
     res.status(201).json({
-      message: 'User registered successfully',
+      message: userType === 'driver'
+        ? 'Driver request submitted successfully'
+        : 'User registered successfully',
       token,
       user: user.getPublicProfile()
     });
@@ -137,6 +141,37 @@ router.post('/login', authenticateLocal, (req, res) => {
         userType: user.userType,
         expectedUserType: expectedUserType
       });
+    }
+
+    // Block driver login until approved
+    if (expectedUserType === 'driver') {
+      const Driver = require('../models/Driver');
+      Driver.findOne({ user: user._id })
+        .select('isApproved approvalStatus rejectionReason')
+        .then((driver) => {
+          if (!driver) {
+            return res.status(403).json({ error: 'Driver profile not found. Please complete driver registration.' });
+          }
+          if (driver.approvalStatus === 'rejected') {
+            const reason = driver.rejectionReason ? ` Reason: ${driver.rejectionReason}` : '';
+            return res.status(403).json({ error: `Your driver request was rejected.${reason}` });
+          }
+          if (!driver.isApproved || driver.approvalStatus !== 'approved') {
+            return res.status(403).json({ error: 'Your driver request is under review. Please wait for admin approval.' });
+          }
+
+          const token = generateToken(user);
+          return res.json({
+            message: 'Login successful',
+            token,
+            user: user.getPublicProfile()
+          });
+        })
+        .catch((e) => {
+          console.error('Driver approval check error:', e);
+          return res.status(500).json({ error: 'Authentication error' });
+        });
+      return;
     }
     
     const token = generateToken(user);

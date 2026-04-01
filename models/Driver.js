@@ -16,6 +16,9 @@ const driverSchema = new mongoose.Schema({
     year: { type: Number, required: true },
     color: { type: String, required: true },
     plateNumber: { type: String, required: true, unique: true },
+    vehicleName: { type: String, default: null },
+    rideType: { type: String, default: null },
+    vehicleImage: { type: String, default: null },
     vehicleType: { 
       type: String, 
       enum: ['car', 'motorcycle', 'suv', 'van'],
@@ -52,6 +55,8 @@ const driverSchema = new mongoose.Schema({
   insuranceExpiry: { type: Date, required: true },
   isVerified: { type: Boolean, default: false },
   isApproved: { type: Boolean, default: false },
+  approvalStatus: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+  rejectionReason: { type: String, default: null },
 
   // Driver preferences
   preferredAreas: [{
