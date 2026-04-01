@@ -3,12 +3,11 @@ const router = express.Router();
 const Driver = require('../models/Driver');
 const DriverWalletTransaction = require('../models/DriverWalletTransaction');
 const { authenticateJWT } = require('../middleware/auth');
-const { getDriverMinimumWalletPkr } = require('../lib/walletSettings');
-const EASYPAISA_DETAILS = {
-  accountNumber: '03001234567',
-  accountHolder: 'Tourist Rides',
-  instructions: 'Send money to the above EasyPaisa account and provide transaction ID'
-};
+const {
+  getDriverMinimumWalletPkr,
+  getDriverPaymentDetailsPayload,
+  getCashInSnapshotForMethod,
+} = require('../lib/walletSettings');
 
 // Get driver wallet balance and recent transactions
 router.get('/balance', authenticateJWT, async (req, res) => {
@@ -54,7 +53,7 @@ router.get('/balance', authenticateJWT, async (req, res) => {
   }
 });
 
-// Get EasyPaisa payment details for cash in
+// Payment details for top-up (EasyPaisa, JazzCash, bank — from admin settings)
 router.get('/payment-details', authenticateJWT, async (req, res) => {
   try {
     const driver = await Driver.findOne({ user: req.user.id });
@@ -62,19 +61,8 @@ router.get('/payment-details', authenticateJWT, async (req, res) => {
       return res.status(404).json({ message: 'Driver profile not found' });
     }
 
-    res.json({
-      paymentMethod: 'easypaisa',
-      details: EASYPAISA_DETAILS,
-      minimumAmount: 100,
-      maximumAmount: 50000,
-      instructions: [
-        '1. Open your EasyPaisa app or visit EasyPaisa shop',
-        '2. Send money to the account number provided',
-        '3. Note down the transaction ID',
-        '4. Enter the transaction ID and amount below',
-        '5. Your request will be processed within 24 hours'
-      ]
-    });
+    const payload = await getDriverPaymentDetailsPayload();
+    res.json(payload);
   } catch (error) {
     console.error('Error fetching payment details:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -85,6 +73,10 @@ router.get('/payment-details', authenticateJWT, async (req, res) => {
 router.post('/cash-in', authenticateJWT, async (req, res) => {
   try {
     const { amount, transactionId, paymentMethod = 'easypaisa', senderName, screenshot } = req.body;
+    const method = String(paymentMethod || 'easypaisa').trim();
+    if (!['easypaisa', 'jazzcash', 'bank_transfer'].includes(method)) {
+      return res.status(400).json({ message: 'Invalid payment method' });
+    }
 
     // Validation
     if (!amount || amount < 100) {
@@ -117,21 +109,27 @@ router.post('/cash-in', authenticateJWT, async (req, res) => {
       return res.status(400).json({ message: 'Transaction ID already used' });
     }
 
+    const snap = await getCashInSnapshotForMethod(method);
+    const paymentDetails = {
+      transactionId: String(transactionId).trim(),
+      accountNumber: snap.accountNumber,
+      accountHolder: snap.accountHolder,
+      senderName: String(senderName).trim(),
+      proofImage: String(screenshot).trim(),
+    };
+    if (snap.reference) {
+      paymentDetails.reference = snap.reference;
+    }
+
     // Create transaction record
     const transaction = new DriverWalletTransaction({
       driverId: req.user.id,
       transactionType: 'cash_in',
       amount: Number(amount),
       status: 'pending',
-      paymentMethod: paymentMethod,
-      paymentDetails: {
-        transactionId: String(transactionId).trim(),
-        accountNumber: EASYPAISA_DETAILS.accountNumber,
-        accountHolder: EASYPAISA_DETAILS.accountHolder,
-        senderName: String(senderName).trim(),
-        proofImage: String(screenshot).trim(),
-      },
-      description: `Top-up request via ${String(paymentMethod).toUpperCase()}`
+      paymentMethod: method,
+      paymentDetails,
+      description: `Top-up request via ${method.replace('_', ' ').toUpperCase()}`
     });
 
     await transaction.save();
