@@ -96,6 +96,7 @@ const fareOfferRoutes = require('./routes/fare-offers');
 const vehicleRoutes = require('./routes/vehicles');
 const adminDriverRequestsRoutes = require('./routes/admin-driver-requests');
 const adminAuthRoutes = require('./routes/admin-auth');
+const adminDeleteRoutes = require('./routes/admin-delete');
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -110,6 +111,7 @@ app.use('/api/fare-offers', fareOfferRoutes);
 app.use('/api/vehicles', vehicleRoutes);
 app.use('/api/admin', adminDriverRequestsRoutes);
 app.use('/api/admin', adminAuthRoutes);
+app.use('/api/admin', adminDeleteRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

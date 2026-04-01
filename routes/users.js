@@ -1,5 +1,6 @@
 const express = require('express');
 const User = require('../models/User');
+const Driver = require('../models/Driver');
 const { authenticateJWT } = require('../middleware/auth');
 const router = express.Router();
 
@@ -13,6 +14,68 @@ router.get('/public/riders', async (req, res) => {
   } catch (error) {
     console.error('Get public riders error:', error);
     return res.status(500).json({ error: 'Failed to get riders' });
+  }
+});
+
+// Public: rider details (for admin UI without auth)
+router.get('/public/riders/:riderId', async (req, res) => {
+  try {
+    const { riderId } = req.params;
+    const rider = await User.findOne({ _id: riderId, userType: 'rider' })
+      .select('firstName lastName phone email userType isVerified totalRides rating createdAt')
+      .lean();
+
+    if (!rider) return res.status(404).json({ error: 'Rider not found' });
+
+    // SOS cases are not a first-class model yet; approximate using RideRequest.isUrgent
+    // (treat urgent requests as SOS/emergency triggers)
+    let sosCases = 0;
+    try {
+      const RideRequest = require('../models/RideRequest');
+      sosCases = await RideRequest.countDocuments({ rider: riderId, isUrgent: true });
+    } catch (e) {
+      sosCases = 0;
+    }
+
+    return res.json({
+      rider,
+      sosCases,
+    });
+  } catch (error) {
+    console.error('Get public rider detail error:', error);
+    return res.status(500).json({ error: 'Failed to get rider details' });
+  }
+});
+
+// Public: list drivers (for admin UI — Driver profile + linked User)
+router.get('/public/drivers', async (req, res) => {
+  try {
+    const drivers = await Driver.find({})
+      .populate('user', 'firstName lastName phone email profileImage createdAt')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return res.json({ drivers });
+  } catch (error) {
+    console.error('Get public drivers error:', error);
+    return res.status(500).json({ error: 'Failed to get drivers' });
+  }
+});
+
+// Public: single driver detail
+router.get('/public/drivers/:driverId', async (req, res) => {
+  try {
+    const { driverId } = req.params;
+    const driver = await Driver.findById(driverId)
+      .populate('user', 'firstName lastName phone email profileImage createdAt')
+      .lean();
+
+    if (!driver) return res.status(404).json({ error: 'Driver not found' });
+
+    return res.json({ driver });
+  } catch (error) {
+    console.error('Get public driver detail error:', error);
+    return res.status(500).json({ error: 'Failed to get driver details' });
   }
 });
 
