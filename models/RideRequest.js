@@ -105,6 +105,16 @@ const rideRequestSchema = new mongoose.Schema({
   notes: { type: String }, // rider's notes
   vehicleType: { type: String, default: 'any' }, // preferred vehicle type
   isUrgent: { type: Boolean, default: false },
+
+  /** Rider-triggered emergency (e.g. Police 15); surfaced in admin Emergency Monitoring */
+  emergencyStatus: {
+    type: String,
+    enum: ['none', 'active', 'resolved'],
+    default: 'none',
+    index: true,
+  },
+  emergencyTriggeredAt: { type: Date, default: null },
+  emergencyResolvedAt: { type: Date, default: null },
   
   // Payment method
   paymentMethod: {

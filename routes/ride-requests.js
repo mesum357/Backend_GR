@@ -398,6 +398,9 @@ router.get('/:id/status', authenticateJWT, async (req, res) => {
         acceptedBy: rideRequest.acceptedBy,
         riderArrivedAt: rideRequest.riderArrivedAt,
         availableDrivers: rideRequest.availableDrivers,
+        emergencyStatus: rideRequest.emergencyStatus,
+        emergencyTriggeredAt: rideRequest.emergencyTriggeredAt,
+        emergencyResolvedAt: rideRequest.emergencyResolvedAt,
       },
       id: rideRequest._id,
       status: rideRequest.status,
@@ -662,6 +665,54 @@ router.patch('/:requestId/fare', authenticateJWT, async (req, res) => {
   } catch (error) {
     console.error('Error updating ride request fare:', error);
     res.status(500).json({ error: 'Failed to update fare' });
+  }
+});
+
+/**
+ * Rider marks an in-flight ride as an emergency case and is expected to call Police (15).
+ * Idempotent if already active.
+ */
+router.post('/:requestId/emergency', authenticateJWT, async (req, res) => {
+  try {
+    if (req.user.userType !== 'rider') {
+      return res.status(403).json({ error: 'Only riders can trigger emergency' });
+    }
+
+    const { requestId } = req.params;
+    const rideRequest = await RideRequest.findById(requestId);
+    if (!rideRequest) {
+      return res.status(404).json({ error: 'Ride request not found' });
+    }
+
+    if (String(rideRequest.rider) !== String(req.user._id)) {
+      return res.status(403).json({ error: 'Not allowed' });
+    }
+
+    if (!['accepted', 'in_progress'].includes(rideRequest.status)) {
+      return res.status(400).json({ error: 'Emergency can only be activated during an active ride' });
+    }
+
+    if (rideRequest.emergencyStatus === 'resolved') {
+      return res.status(400).json({ error: 'This emergency case has been closed' });
+    }
+
+    if (rideRequest.emergencyStatus !== 'active') {
+      rideRequest.emergencyStatus = 'active';
+      rideRequest.emergencyTriggeredAt = new Date();
+      await rideRequest.save();
+    }
+
+    return res.json({
+      message: 'Emergency recorded. Contact police if needed.',
+      rideRequest: {
+        id: rideRequest._id,
+        emergencyStatus: rideRequest.emergencyStatus,
+        emergencyTriggeredAt: rideRequest.emergencyTriggeredAt,
+      },
+    });
+  } catch (error) {
+    console.error('Emergency trigger error:', error);
+    return res.status(500).json({ error: 'Failed to record emergency' });
   }
 });
 

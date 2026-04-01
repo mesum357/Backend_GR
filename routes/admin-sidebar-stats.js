@@ -19,10 +19,7 @@ router.get('/sidebar-counts', authenticateAdminJWT, async (req, res) => {
           transactionType: 'cash_in',
           status: 'pending',
         }),
-        RideRequest.countDocuments({
-          isUrgent: true,
-          status: { $in: ['searching', 'pending', 'accepted', 'in_progress'] },
-        }),
+        RideRequest.countDocuments({ emergencyStatus: 'active' }),
         SupportTicket.countDocuments({ status: { $in: ['open', 'answered'] } }),
       ]);
 
