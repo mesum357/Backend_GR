@@ -38,19 +38,19 @@ const appSettingsSchema = new mongoose.Schema(
       min: 10,
       max: 3600,
     },
-    /** Penalty rules: warning period (days) for driver “driver didn't arrive” consecutive cancels. */
-    driverPenaltyWarningPeriodDays: {
+    /** Penalty rules: warning strike threshold (times) for “driver didn't arrive” consecutive cancels. */
+    driverPenaltyWarningTimes: {
       type: Number,
-      default: 30,
+      default: 3,
       min: 1,
-      max: 3650,
+      max: 1000,
     },
-    /** Penalty rules: penalty period (days) for driver “driver didn't arrive” consecutive cancels. */
-    driverPenaltyPeriodDays: {
+    /** Penalty rules: penalty strike threshold (times) for “driver didn't arrive” consecutive cancels. */
+    driverPenaltyTimes: {
       type: Number,
-      default: 30,
+      default: 5,
       min: 1,
-      max: 3650,
+      max: 1000,
     },
     /** Penalty rules: account deactivation duration (days) when warning threshold is reached. */
     driverPenaltyWarningDeactivationDays: {
