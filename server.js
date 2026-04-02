@@ -190,6 +190,10 @@ const io = socketIo(server, {
 // Store active connections
 const activeConnections = new Map(); // userId -> socketId
 const driverConnections = new Map(); // driverId -> socketId
+/** rideRequestId -> { riderId, driverId } — cached for ride_presence without repeated DB reads */
+const ridePresenceParticipants = new Map();
+/** userId -> Set<rideRequestId> — who asked for presence updates (re-notify on reconnect) */
+const ridePresenceSubscriberRides = new Map();
 const processedEventIds = new Map(); // eventId -> processedAt
 const PROCESSED_EVENT_TTL_MS = 10 * 60 * 1000;
 
@@ -240,6 +244,30 @@ function clearFareResponseTimeout(rideRequestId, driverId) {
   fareResponseTimeouts.delete(key);
 }
 
+async function notifyRidePresence(ioInstance, rideRequestId) {
+  const rid = rideRequestId != null ? String(rideRequestId) : '';
+  if (!rid) return;
+  let pair = ridePresenceParticipants.get(rid);
+  if (!pair) {
+    const RideRequest = require('./models/RideRequest');
+    const rr = await RideRequest.findById(rid).select('rider acceptedBy').lean();
+    if (!rr?.rider || !rr.acceptedBy) return;
+    pair = { riderId: String(rr.rider), driverId: String(rr.acceptedBy) };
+    ridePresenceParticipants.set(rid, pair);
+  }
+  const { riderId, driverId } = pair;
+  const riderOnline = !!activeConnections.get(riderId);
+  const driverOnline = !!driverConnections.get(driverId);
+  const payload = {
+    rideRequestId: rid,
+    riderOnline,
+    driverOnline,
+    timestamp: Date.now(),
+  };
+  emitToUser(ioInstance, riderId, 'ride_presence', payload);
+  emitToUser(ioInstance, driverId, 'ride_presence', payload);
+}
+
 async function scheduleFareResponseTimeout(io, rideRequestId, driverId) {
   const key = `${String(rideRequestId)}:${String(driverId)}`;
   const existing = fareResponseTimeouts.get(key);
@@ -285,6 +313,8 @@ io.on('connection', (socket) => {
       console.warn('Socket authenticate: missing userId');
       return;
     }
+    socket.data.userId = userId;
+    socket.data.userType = userType === 'driver' ? 'driver' : 'rider';
     activeConnections.set(userId, socket.id);
     const room = userSocketRoom(userId);
     if (room) socket.join(room);
@@ -294,6 +324,56 @@ io.on('connection', (socket) => {
       console.log(`🚗 Driver ${userId} connected`);
     } else {
       console.log(`👤 Rider ${userId} connected`);
+    }
+
+    const subs = ridePresenceSubscriberRides.get(userId);
+    if (subs && subs.size) {
+      for (const rrKey of subs) {
+        notifyRidePresence(io, rrKey).catch(() => {});
+      }
+    }
+  });
+
+  // Rider/driver subscribe to real-time presence for message ticks (socket connected = online).
+  socket.on('ride_presence_subscribe', async (data) => {
+    try {
+      const uid = socket.data?.userId;
+      if (!uid) return;
+      const rideRequestId = data?.rideRequestId;
+      if (!rideRequestId) return;
+
+      const RideRequest = require('./models/RideRequest');
+      const rr = await RideRequest.findById(rideRequestId).select('rider acceptedBy').lean();
+      if (!rr?.rider || !rr.acceptedBy) return;
+
+      const riderId = String(rr.rider);
+      const driverId = String(rr.acceptedBy);
+      const sid = String(uid);
+      if (sid !== riderId && sid !== driverId) return;
+
+      const rrKey = String(rideRequestId);
+      ridePresenceParticipants.set(rrKey, { riderId, driverId });
+      if (!ridePresenceSubscriberRides.has(sid)) ridePresenceSubscriberRides.set(sid, new Set());
+      ridePresenceSubscriberRides.get(sid).add(rrKey);
+
+      await notifyRidePresence(io, rrKey);
+    } catch (e) {
+      console.error('ride_presence_subscribe error:', e?.message || e);
+    }
+  });
+
+  socket.on('ride_presence_unsubscribe', (data) => {
+    try {
+      const uid = socket.data?.userId;
+      if (!uid) return;
+      const rideRequestId = data?.rideRequestId;
+      if (!rideRequestId) return;
+      const set = ridePresenceSubscriberRides.get(String(uid));
+      if (!set) return;
+      set.delete(String(rideRequestId));
+      if (set.size === 0) ridePresenceSubscriberRides.delete(String(uid));
+    } catch (e) {
+      console.error('ride_presence_unsubscribe error:', e?.message || e);
     }
   });
 
@@ -1254,14 +1334,24 @@ io.on('connection', (socket) => {
   // Handle disconnection
   socket.on('disconnect', () => {
     console.log(`🔌 Disconnected: ${socket.id}`);
-    
-    // Remove from active connections
+
+    let disconnectedUserId = null;
     for (const [userId, socketId] of activeConnections.entries()) {
       if (socketId === socket.id) {
+        disconnectedUserId = userId;
         activeConnections.delete(userId);
         driverConnections.delete(userId);
         console.log(`👤 User ${userId} disconnected`);
         break;
+      }
+    }
+
+    if (disconnectedUserId) {
+      const rides = ridePresenceSubscriberRides.get(disconnectedUserId);
+      if (rides && rides.size) {
+        for (const rrKey of [...rides]) {
+          notifyRidePresence(io, rrKey).catch(() => {});
+        }
       }
     }
   });
