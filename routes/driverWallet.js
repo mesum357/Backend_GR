@@ -258,6 +258,108 @@ router.get('/transactions', authenticateJWT, async (req, res) => {
   }
 });
 
+// Income summary for driver app (completed rides, fares, commission) — PKR
+router.get('/income-summary', authenticateJWT, async (req, res) => {
+  try {
+    const periodRaw = String(req.query.period || 'week').toLowerCase();
+    const period = ['day', 'week', 'month'].includes(periodRaw) ? periodRaw : 'week';
+    const now = new Date();
+    let start = new Date(now);
+
+    if (period === 'day') {
+      start.setHours(0, 0, 0, 0);
+    } else if (period === 'week') {
+      start.setDate(now.getDate() - 6);
+      start.setHours(0, 0, 0, 0);
+    } else {
+      start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+    }
+
+    const Ride = require('../models/Ride');
+    const rides = await Ride.find({
+      driver: req.user.id,
+      status: 'completed',
+      endTime: { $gte: start, $lte: now },
+    })
+      .select('price.amount driverCommissionAmount endTime rating.driverRating distance')
+      .lean();
+
+    let grossFaresPkr = 0;
+    let commissionPaidPkr = 0;
+    let ratingSum = 0;
+    let ratingCount = 0;
+    for (const r of rides) {
+      grossFaresPkr += Number(r?.price?.amount || 0);
+      commissionPaidPkr += Number(r?.driverCommissionAmount || 0);
+      const rt = r?.rating?.driverRating;
+      if (typeof rt === 'number' && !Number.isNaN(rt)) {
+        ratingSum += rt;
+        ratingCount += 1;
+      }
+    }
+    const netTripPkr = Math.max(0, grossFaresPkr - commissionPaidPkr);
+    const averageRating = ratingCount ? ratingSum / ratingCount : 0;
+
+    const dayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const dayKey = (d) => {
+      const x = new Date(d);
+      const y = x.getFullYear();
+      const m = String(x.getMonth() + 1).padStart(2, '0');
+      const day = String(x.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    };
+
+    const bucket = {};
+    const cursor = new Date(start);
+    while (cursor <= now) {
+      const k = dayKey(cursor);
+      bucket[k] = {
+        date: k,
+        label: dayLabels[cursor.getDay()],
+        grossPkr: 0,
+        rides: 0,
+      };
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    for (const r of rides) {
+      if (!r.endTime) continue;
+      const k = dayKey(new Date(r.endTime));
+      if (!bucket[k]) {
+        const ed = new Date(r.endTime);
+        bucket[k] = {
+          date: k,
+          label: dayLabels[ed.getDay()],
+          grossPkr: 0,
+          rides: 0,
+        };
+      }
+      bucket[k].grossPkr += Number(r?.price?.amount || 0);
+      bucket[k].rides += 1;
+    }
+
+    const daily = Object.keys(bucket)
+      .sort()
+      .map((key) => bucket[key]);
+
+    res.json({
+      period,
+      currency: 'PKR',
+      periodStart: start.toISOString(),
+      periodEnd: now.toISOString(),
+      ridesCompleted: rides.length,
+      grossFaresPkr,
+      commissionPaidPkr,
+      netTripPkr,
+      averageRating: Math.round(averageRating * 10) / 10,
+      daily,
+    });
+  } catch (error) {
+    console.error('Error fetching income summary:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
 // Check if driver can accept rides (minimum balance check)
 router.get('/can-accept-rides', authenticateJWT, async (req, res) => {
   try {
