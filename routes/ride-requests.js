@@ -8,7 +8,6 @@ const { buildDriverFareOfferEnrichment } = require('../utils/driverFareOfferEnri
 const { getSystemSettings } = require('../lib/systemSettings');
 const { getServiceUnavailableZoneAt } = require('../lib/serviceZones');
 const { registerRiderCancellationForPenalty } = require('../lib/registerNoArrivalCancellation');
-const Driver = require('../models/Driver');
 const { getDriverMinimumWalletPkr } = require('../lib/walletSettings');
 
 /** Same delivery semantics as server.js emitToUser (user room + legacy socket id). */
