@@ -813,13 +813,28 @@ router.post('/:requestId/respond', authenticateJWT, async (req, res) => {
           driverResponse.counterOffer = Number(counterOffer);
         }
 
-        await rideRequest.save();
-
-        const enriched = await buildDriverFareOfferEnrichment(req.user._id);
+        // Persist offer so rider response + timeout can be tracked.
         const offerFare = (counterOffer && Number(counterOffer) > 0)
           ? Number(counterOffer)
           : (rideRequest.requestedPrice || rideRequest.suggestedPrice || 0);
         const arrivalTime = Math.floor(Math.random() * 10) + 5;
+        const enriched = await buildDriverFareOfferEnrichment(req.user._id);
+
+        rideRequest.fareOffers = Array.isArray(rideRequest.fareOffers) ? rideRequest.fareOffers : [];
+        rideRequest.fareOffers.push({
+          driver: req.user._id,
+          driverName: enriched.driverName,
+          driverRating: enriched.driverRating,
+          fareAmount: offerFare,
+          arrivalTime,
+          vehicleInfo: enriched.vehicleInfo,
+          vehicleName: enriched.vehicleName,
+          driverPhoto: enriched.driverPhoto,
+          offeredAt: new Date(),
+          status: 'pending',
+        });
+
+        await rideRequest.save();
 
         emitToUserFromApp(req, String(rideRequest.rider), 'fare_offer', {
           rideRequestId: String(rideRequest._id),
@@ -833,6 +848,16 @@ router.post('/:requestId/respond', authenticateJWT, async (req, res) => {
           driverPhoto: enriched.driverPhoto,
           timestamp: Date.now(),
         });
+
+        // Schedule server-side 15s timeout for driver waiting dialog.
+        try {
+          const schedule = req.app.get('scheduleFareResponseTimeout');
+          if (typeof schedule === 'function') {
+            await schedule(String(rideRequest._id), String(req.user._id));
+          }
+        } catch {
+          // non-fatal
+        }
 
         res.json({
           message: 'Offer sent to rider successfully',

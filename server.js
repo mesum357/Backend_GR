@@ -228,6 +228,51 @@ const emitToUser = (io, userId, event, payload) => {
 
 const { buildDriverFareOfferEnrichment } = require('./utils/driverFareOfferEnrichment');
 
+// Fare-offer response timeouts (driver waits 15 seconds for rider).
+// Keyed by `${rideRequestId}:${driverId}` -> timeoutId
+const fareResponseTimeouts = new Map();
+const FARE_RESPONSE_TIMEOUT_MS = 15000;
+
+function clearFareResponseTimeout(rideRequestId, driverId) {
+  const key = `${String(rideRequestId)}:${String(driverId)}`;
+  const t = fareResponseTimeouts.get(key);
+  if (t) clearTimeout(t);
+  fareResponseTimeouts.delete(key);
+}
+
+async function scheduleFareResponseTimeout(io, rideRequestId, driverId) {
+  const key = `${String(rideRequestId)}:${String(driverId)}`;
+  const existing = fareResponseTimeouts.get(key);
+  if (existing) clearTimeout(existing);
+
+  const timeoutId = setTimeout(async () => {
+    try {
+      const RideRequest = require('./models/RideRequest');
+      const rr = await RideRequest.findById(rideRequestId).select('status fareOffers acceptedBy').lean();
+      if (!rr) return;
+      // If already accepted/assigned, don't timeout.
+      if (String(rr.status || '').toLowerCase() === 'accepted' || rr.acceptedBy) return;
+
+      const pending = (rr.fareOffers || []).find(
+        (o) => String(o?.driver) === String(driverId) && String(o?.status) === 'pending'
+      );
+      if (!pending) return;
+
+      emitToUser(io, driverId, 'fare_response_timeout', {
+        rideRequestId: String(rideRequestId),
+        driverId: String(driverId),
+        timestamp: Date.now(),
+      });
+    } catch (e) {
+      console.error('scheduleFareResponseTimeout error (non-fatal):', e?.message || e);
+    } finally {
+      fareResponseTimeouts.delete(key);
+    }
+  }, FARE_RESPONSE_TIMEOUT_MS);
+
+  fareResponseTimeouts.set(key, timeoutId);
+}
+
 // Socket.IO connection handling
 io.on('connection', (socket) => {
   console.log(`🔌 New connection: ${socket.id}`);
@@ -325,6 +370,9 @@ io.on('connection', (socket) => {
           });
           console.log(`💰 Fare offer sent to rider ${rideRequest.rider} from driver ${driverId}`);
 
+          // Driver should wait 15 seconds for rider response.
+          await scheduleFareResponseTimeout(io, rideRequestId, driverId);
+
           socket.emit('response_success', { 
             message: 'Offer sent successfully. Waiting for rider response...',
             rideRequestId,
@@ -421,6 +469,9 @@ io.on('connection', (socket) => {
         timestamp: Date.now(),
       });
       console.log(`💰 Fare offer sent to rider ${rideRequest.rider} from driver ${driverId}`);
+
+      // Driver should wait 15 seconds for rider response.
+      await scheduleFareResponseTimeout(io, rideRequestId, driverId);
 
       socket.emit('fare_offer_sent', { message: 'Fare offer sent successfully' });
 
@@ -623,6 +674,13 @@ io.on('connection', (socket) => {
         timestamp: Date.now()
       });
       console.log(`💰 Fare response sent to driver ${targetOffer.driver} from rider ${riderId}: ${action}`);
+
+      // Clear timeout for the offer's driver, and also clear other drivers on accept (we reject pending offers).
+      clearFareResponseTimeout(rideRequestId, targetOffer.driver);
+      if (action === 'accept') {
+        const otherDrivers = new Set((rideRequest.fareOffers || []).map((o) => String(o.driver)));
+        otherDrivers.forEach((d) => clearFareResponseTimeout(rideRequestId, d));
+      }
 
       // Notify rider about the response
       emitToUser(io, riderId, 'fare_response_confirmed', {
@@ -1213,6 +1271,13 @@ io.on('connection', (socket) => {
 app.set('io', io);
 app.set('activeConnections', activeConnections);
 app.set('driverConnections', driverConnections);
+// Expose fare-response timeout scheduling for REST endpoints (ride-requests /respond).
+app.set('scheduleFareResponseTimeout', (rideRequestId, driverId) =>
+  scheduleFareResponseTimeout(io, rideRequestId, driverId)
+);
+app.set('clearFareResponseTimeout', (rideRequestId, driverId) =>
+  clearFareResponseTimeout(rideRequestId, driverId)
+);
 
 // Get network IP address
 const os = require('os');
