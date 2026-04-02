@@ -1,11 +1,11 @@
 const express = require('express');
 const router = express.Router();
-const REQUEST_EXPIRY_MS = 72 * 1000; // 1.2 minutes
 const RideRequest = require('../models/RideRequest');
 const User = require('../models/User');
 const Driver = require('../models/Driver');
 const { authenticateJWT } = require('../middleware/auth');
 const { buildDriverFareOfferEnrichment } = require('../utils/driverFareOfferEnrichment');
+const { getSystemSettings } = require('../lib/systemSettings');
 
 /** Same delivery semantics as server.js emitToUser (user room + legacy socket id). */
 function emitToUserFromApp(req, userId, event, payload) {
@@ -149,22 +149,25 @@ router.post('/create', authenticateJWT, async (req, res) => {
 // New endpoint for ride request with 1.2km radius search
 router.post('/request-ride', authenticateJWT, async (req, res) => {
   try {
-    console.log('🔧 Received request body:', req.body);
     const {
       pickup,
       destination,
       offeredFare,
-      radiusMeters = 1200, // Default 1.2km radius
+      radiusMeters,
       paymentMethod = 'cash',
       vehicleType = 'any',
       notes = ''
     } = req.body;
 
-    console.log('🔧 Payment method received:', paymentMethod);
+    const systemSettings = await getSystemSettings();
+    const radiusMetersFromSettings = Number(systemSettings.maxRideRadiusKm) * 1000;
+    const driverTimeoutMs = Number(systemSettings.driverTimeoutSeconds) * 1000;
+
+    const radiusMetersFinal = Number(radiusMeters) > 0 ? Number(radiusMeters) : radiusMetersFromSettings;
+    const radiusKmFinal = radiusMetersFinal / 1000;
 
     // Normalize payment method to lowercase
     const normalizedPaymentMethod = paymentMethod ? paymentMethod.toLowerCase() : 'cash';
-    console.log('🔧 Normalized payment method:', normalizedPaymentMethod);
 
     // Validate required fields
     if (!pickup || !destination || !offeredFare) {
@@ -221,18 +224,18 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
       notes,
       vehicleType,
       paymentMethod: normalizedPaymentMethod,
-      requestRadius: radiusMeters / 1000, // Convert meters to km
-      expiresAt: new Date(Date.now() + REQUEST_EXPIRY_MS), // 1.2 minutes
+      requestRadius: radiusKmFinal, // Convert meters to km
+      expiresAt: new Date(Date.now() + driverTimeoutMs),
       status: 'searching'
     });
 
     await rideRequest.save();
 
-    // Find drivers within 1.2km radius using Haversine formula
+    // Find drivers within configured radius using Haversine formula
     const nearbyDrivers = await findDriversWithinRadius(
       pickup.latitude,
       pickup.longitude,
-      radiusMeters / 1000 // Convert to km
+      radiusKmFinal
     );
 
     // Get socket.io instance

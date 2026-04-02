@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const REQUEST_EXPIRY_MS = 72 * 1000; // 1.2 minutes
+const { getSystemSettings } = require('../lib/systemSettings');
 
 const rideRequestSchema = new mongoose.Schema({
   // Rider information
@@ -182,9 +182,16 @@ rideRequestSchema.methods.deg2rad = function(deg) {
 // Static method to create ride request
 rideRequestSchema.statics.createRequest = async function(rideData) {
   const request = new this(rideData);
-  
-  // Set expiration time (1.2 minutes from now)
-  request.expiresAt = new Date(Date.now() + REQUEST_EXPIRY_MS);
+
+  const systemSettings = await getSystemSettings();
+
+  // Set expiration time (admin-configured) while searching for drivers.
+  request.expiresAt = new Date(Date.now() + Number(systemSettings.driverTimeoutSeconds) * 1000);
+
+  // If caller didn't provide a radius, use admin-configured max ride radius.
+  if (rideData?.requestRadius == null) {
+    request.requestRadius = Number(systemSettings.maxRideRadiusKm);
+  }
   
   // Calculate distance
   request.distance = request.calculateDistance(

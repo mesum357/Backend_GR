@@ -24,6 +24,20 @@ const bankSchema = new mongoose.Schema(
 const appSettingsSchema = new mongoose.Schema(
   {
     _id: { type: String, default: 'singleton' },
+    /** Max radius (km) used when finding nearby drivers for a ride. */
+    maxRideRadiusKm: {
+      type: Number,
+      default: 5,
+      min: 0.1,
+      max: 500,
+    },
+    /** How long (seconds) a ride request remains valid while searching for drivers. */
+    driverTimeoutSeconds: {
+      type: Number,
+      default: 72,
+      min: 10,
+      max: 3600,
+    },
     /** Minimum wallet balance (PKR) required for drivers to accept rides */
     driverMinimumWalletPkr: {
       type: Number,

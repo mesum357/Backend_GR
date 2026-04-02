@@ -104,6 +104,7 @@ const adminSupportRoutes = require('./routes/admin-support');
 const rideFaresRoutes = require('./routes/ride-fares');
 const adminRideFaresRoutes = require('./routes/admin-ride-fares');
 const adminEmergencyRidesRoutes = require('./routes/admin-emergency-rides');
+const systemSettingsRoutes = require('./routes/system-settings');
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -126,6 +127,7 @@ app.use('/api/support', supportRoutes);
 app.use('/api/ride-fares', rideFaresRoutes);
 app.use('/api/admin', adminRideFaresRoutes);
 app.use('/api/admin', adminEmergencyRidesRoutes);
+app.use('/api', systemSettingsRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
