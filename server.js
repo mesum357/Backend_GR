@@ -112,6 +112,8 @@ const appUpdatesRoutes = require('./routes/app-updates');
 const adminNotificationCenterRoutes = require('./routes/admin-notification-center');
 const notificationCenterRoutes = require('./routes/notification-center');
 const adminLiveRidesRoutes = require('./routes/admin-live-rides');
+const adminFinancialDashboardRoutes = require('./routes/admin-financial-dashboard');
+const adminDashboardRoutes = require('./routes/admin-dashboard');
 const { deductDriverCommissionForRide } = require('./lib/driverCommission');
 const { normalizeRideTypeKey } = require('./utils/rideFarePricing');
 
@@ -140,6 +142,8 @@ app.use('/api/admin', adminPenaltiesRoutes);
 app.use('/api/admin', adminAppUpdatesRoutes);
 app.use('/api/admin', adminNotificationCenterRoutes);
 app.use('/api/admin', adminLiveRidesRoutes);
+app.use('/api/admin', adminFinancialDashboardRoutes);
+app.use('/api/admin', adminDashboardRoutes);
 app.use('/api', systemSettingsRoutes);
 app.use('/api', serviceZonesRoutes);
 app.use('/api', appUpdatesRoutes);
