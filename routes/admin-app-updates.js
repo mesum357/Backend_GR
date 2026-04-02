@@ -37,50 +37,32 @@ router.get('/app-updates/releases', authenticateAdminJWT, async (req, res) => {
 
 router.post('/app-updates/releases', authenticateAdminJWT, async (req, res) => {
   try {
-    const { version, riderApp, driverApp, type, notes, schedule, scheduleDate } = req.body || {};
+    const { version, type, notes, schedule, scheduleDate } = req.body || {};
 
     const v = String(version || '').trim();
     if (!v) return res.status(400).json({ error: 'Version is required' });
-
-    const selectedApps = [];
-    if (riderApp) selectedApps.push('rider');
-    if (driverApp) selectedApps.push('driver');
-    if (selectedApps.length === 0) return res.status(400).json({ error: 'Select Rider App and/or Driver App' });
 
     const t = type === 'force' ? 'force' : 'optional';
     const isScheduled = !!schedule;
     const scheduledAt = isScheduled && scheduleDate ? new Date(String(scheduleDate)) : null;
     const status = isScheduled ? 'scheduled' : 'active';
 
-    const docs = selectedApps.map((app) => ({
-      app,
+    const created = await AppUpdateRelease.create({
+      app: 'all',
       version: v,
       type: t,
       status,
       notes: notes ? String(notes) : '',
       scheduledAt,
       publishedAt: new Date(),
-    }));
+    });
 
-    const created = await AppUpdateRelease.insertMany(docs);
+    // Convenience: update current version; if force release, also bump minVersion.
+    const patch = { currentVersion: v };
+    if (t === 'force') patch.minVersion = v;
+    await patchAppUpdateSettings(patch);
 
-    // Convenience: update "current version" for selected apps on publish.
-    // If force release, also bump minVersion for selected apps.
-    const patch = {};
-    if (selectedApps.includes('rider')) {
-      patch.riderCurrent = v;
-      if (t === 'force') patch.riderMin = v;
-    }
-    if (selectedApps.includes('driver')) {
-      patch.driverCurrent = v;
-      if (t === 'force') patch.driverMin = v;
-    }
-
-    if (Object.keys(patch).length > 0) {
-      await patchAppUpdateSettings(patch);
-    }
-
-    return res.status(201).json({ releases: created });
+    return res.status(201).json({ release: created });
   } catch {
     return res.status(500).json({ error: 'Failed to publish release' });
   }

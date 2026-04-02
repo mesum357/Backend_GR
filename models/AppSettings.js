@@ -80,15 +80,22 @@ const appSettingsSchema = new mongoose.Schema(
       bank: { type: bankSchema, default: () => ({}) },
     },
 
-    /** App update management (single platform config; rider/driver separated). */
+    /** App update management (single app). */
     appUpdateForceEnabled: { type: Boolean, default: false },
+    appCurrentVersion: { type: String, default: '' },
+    appMinVersion: { type: String, default: '' },
+    appUpdateMessage: { type: String, default: 'A new version is available. Please update to continue.' },
+    appUpdatePlayStoreUrl: { type: String, default: '' },
+    appUpdateAppStoreUrl: { type: String, default: '' },
+
+    /**
+     * Backward-compat fields (legacy rider/driver split). Keep them so existing DB data doesn't break.
+     * New code should prefer `appCurrentVersion` / `appMinVersion`.
+     */
     riderAppCurrentVersion: { type: String, default: '' },
     riderAppMinVersion: { type: String, default: '' },
     driverAppCurrentVersion: { type: String, default: '' },
     driverAppMinVersion: { type: String, default: '' },
-    appUpdateMessage: { type: String, default: 'A new version is available. Please update to continue.' },
-    appUpdatePlayStoreUrl: { type: String, default: '' },
-    appUpdateAppStoreUrl: { type: String, default: '' },
   },
   { timestamps: true }
 );
