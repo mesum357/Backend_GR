@@ -143,21 +143,25 @@ rideRequestSchema.pre('save', function(next) {
 
 // Method to find nearby drivers
 rideRequestSchema.methods.findNearbyDrivers = async function(maxDistance = 5) {
-  const Driver = mongoose.model('User');
-  
-  return await Driver.find({
-    userType: 'driver',
-    isOnline: true,
+  const Driver = mongoose.model('Driver');
+
+  // Reuse Driver model's geospatial query and also apply penalty deactivation filters.
+  const drivers = await Driver.findNearbyDrivers(
+    this.pickupLocation.latitude,
+    this.pickupLocation.longitude,
+    maxDistance
+  );
+
+  // Legacy shape expected by `routes/ride-requests.js` `/create` endpoint.
+  // That endpoint expects:
+  // - `driver._id` to be the *User* (driver) id
+  // - `driver.location.coordinates` to be [longitude, latitude]
+  return drivers.map((d) => ({
+    _id: d?.user?._id || d?.user || d?._id,
     location: {
-      $near: {
-        $geometry: {
-          type: 'Point',
-          coordinates: [this.pickupLocation.longitude, this.pickupLocation.latitude]
-        },
-        $maxDistance: maxDistance * 1000 // Convert km to meters
-      }
-    }
-  }).limit(20); // Limit to 20 nearby drivers
+      coordinates: d?.currentLocation?.coordinates || [this.pickupLocation.longitude, this.pickupLocation.latitude],
+    },
+  }));
 };
 
 // Method to calculate distance between two points

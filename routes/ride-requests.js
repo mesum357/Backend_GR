@@ -7,6 +7,7 @@ const { authenticateJWT } = require('../middleware/auth');
 const { buildDriverFareOfferEnrichment } = require('../utils/driverFareOfferEnrichment');
 const { getSystemSettings } = require('../lib/systemSettings');
 const { getServiceUnavailableZoneAt } = require('../lib/serviceZones');
+const { registerRiderCancellationForPenalty } = require('../lib/registerNoArrivalCancellation');
 
 /** Same delivery semantics as server.js emitToUser (user room + legacy socket id). */
 function emitToUserFromApp(req, userId, event, payload) {
@@ -929,6 +930,7 @@ router.post('/:requestId/accept-counter-offer', authenticateJWT, async (req, res
 router.post('/:requestId/cancel', authenticateJWT, async (req, res) => {
   try {
     const { requestId } = req.params;
+    const { reason } = req.body || {};
 
     const rideRequest = await RideRequest.findById(requestId);
     if (!rideRequest) {
@@ -965,6 +967,20 @@ router.post('/:requestId/cancel', authenticateJWT, async (req, res) => {
     console.log(
       `🚫 Ride request ${requestId} cancelled by ${uid} (${req.user.userType}) — ${oldStatus} → cancelled`
     );
+
+    // Rider cancellation reason -> driver penalty / warning logic.
+    if (req.user.userType === 'rider' && rideRequest.acceptedBy) {
+      try {
+        await registerRiderCancellationForPenalty({
+          riderId: req.user._id,
+          rideRequestId: rideRequest._id,
+          driverUserId: rideRequest.acceptedBy,
+          reasonKey: typeof reason === 'string' ? reason : null,
+        });
+      } catch {
+        // Best-effort; don't fail cancellation.
+      }
+    }
 
     notifyRideCancellationRealtime(req, rideRequest, requestId, uid);
 

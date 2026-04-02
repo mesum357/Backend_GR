@@ -106,6 +106,7 @@ const adminRideFaresRoutes = require('./routes/admin-ride-fares');
 const adminEmergencyRidesRoutes = require('./routes/admin-emergency-rides');
 const systemSettingsRoutes = require('./routes/system-settings');
 const serviceZonesRoutes = require('./routes/service-zones');
+const adminPenaltiesRoutes = require('./routes/admin-penalties');
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -128,6 +129,7 @@ app.use('/api/support', supportRoutes);
 app.use('/api/ride-fares', rideFaresRoutes);
 app.use('/api/admin', adminRideFaresRoutes);
 app.use('/api/admin', adminEmergencyRidesRoutes);
+app.use('/api/admin', adminPenaltiesRoutes);
 app.use('/api', systemSettingsRoutes);
 app.use('/api', serviceZonesRoutes);
 
@@ -248,6 +250,18 @@ io.on('connection', (socket) => {
         return;
       }
 
+      // Prevent deactivated (warning/penalty) drivers from interacting with ride requests.
+      // This is enforced server-side because deactivation is based on DB fields.
+      const Driver = require('./models/Driver');
+      const driverDoc = await Driver.findOne({
+        user: driverId,
+        accountDeactivatedUntil: { $gt: new Date() },
+      }).lean();
+      if (driverDoc) {
+        socket.emit('error', { message: 'Driver account is temporarily deactivated' });
+        return;
+      }
+
       if (action === 'accept') {
         // Driver accept should only send a fare offer. Final assignment happens on rider acceptance.
         if (rideRequest.status === 'pending' || rideRequest.status === 'searching') {
@@ -335,6 +349,16 @@ io.on('connection', (socket) => {
       
       if (!rideRequest) {
         socket.emit('error', { message: 'Ride request not found' });
+        return;
+      }
+
+      const Driver = require('./models/Driver');
+      const driverDoc = await Driver.findOne({
+        user: driverId,
+        accountDeactivatedUntil: { $gt: new Date() },
+      }).lean();
+      if (driverDoc) {
+        socket.emit('error', { message: 'Driver account is temporarily deactivated' });
         return;
       }
 

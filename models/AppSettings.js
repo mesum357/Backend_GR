@@ -38,6 +38,34 @@ const appSettingsSchema = new mongoose.Schema(
       min: 10,
       max: 3600,
     },
+    /** Penalty rules: warning period (days) for driver “driver didn't arrive” consecutive cancels. */
+    driverPenaltyWarningPeriodDays: {
+      type: Number,
+      default: 30,
+      min: 1,
+      max: 3650,
+    },
+    /** Penalty rules: penalty period (days) for driver “driver didn't arrive” consecutive cancels. */
+    driverPenaltyPeriodDays: {
+      type: Number,
+      default: 30,
+      min: 1,
+      max: 3650,
+    },
+    /** Penalty rules: account deactivation duration (days) when warning threshold is reached. */
+    driverPenaltyWarningDeactivationDays: {
+      type: Number,
+      default: 7,
+      min: 0.1,
+      max: 3650,
+    },
+    /** Penalty rules: account deactivation duration (days) when penalty threshold is reached. */
+    driverPenaltyDeactivationDays: {
+      type: Number,
+      default: 7,
+      min: 0.1,
+      max: 3650,
+    },
     /** Minimum wallet balance (PKR) required for drivers to accept rides */
     driverMinimumWalletPkr: {
       type: Number,

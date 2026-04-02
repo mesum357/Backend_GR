@@ -29,6 +29,18 @@ const driverSchema = new mongoose.Schema({
   // Driver status and availability
   isOnline: { type: Boolean, default: false },
   isAvailable: { type: Boolean, default: false },
+  
+  // Penalty management (rider cancellations with “driver didn't arrive”)
+  noArrivalStreakCount: { type: Number, default: 0 },
+  noArrivalStreakStartedAt: { type: Date, default: null },
+  noArrivalStreakLastAt: { type: Date, default: null },
+
+  penaltyStatus: {
+    type: String,
+    enum: ['none', 'warning', 'penalized'],
+    default: 'none',
+  },
+  accountDeactivatedUntil: { type: Date, default: null },
   currentLocation: {
     type: {
       type: String,
@@ -177,6 +189,10 @@ driverSchema.statics.findNearbyDrivers = async function(latitude, longitude, max
     isOnline: true,
     isAvailable: true,
     isApproved: true,
+    $or: [
+      { accountDeactivatedUntil: null },
+      { accountDeactivatedUntil: { $lte: new Date() } },
+    ],
     currentLocation: {
       $near: {
         $geometry: {
