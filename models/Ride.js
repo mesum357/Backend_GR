@@ -50,6 +50,14 @@ const rideSchema = new mongoose.Schema({
     enum: ['pending', 'accepted', 'started', 'completed', 'cancelled'],
     default: 'pending'
   },
+  rideType: {
+    type: String,
+    enum: ['moto', 'ride_mini', 'ride_ac', 'premium'],
+    default: 'ride_mini',
+  },
+  driverCommissionPct: { type: Number, default: 0 },
+  driverCommissionAmount: { type: Number, default: 0 },
+  commissionDeductedAt: { type: Date, default: null },
   price: {
     amount: {
       type: Number,

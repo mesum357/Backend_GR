@@ -5,6 +5,10 @@ const User = require('../models/User');
 const { authenticateJWT, requireUserType } = require('../middleware/auth');
 const router = express.Router();
 const RideRequest = require('../models/RideRequest');
+const Driver = require('../models/Driver');
+const { getDriverMinimumWalletPkr } = require('../lib/walletSettings');
+const { deductDriverCommissionForRide } = require('../lib/driverCommission');
+const { normalizeRideTypeKey } = require('../utils/rideFarePricing');
 
 /** ObjectId hex string; works for ObjectId, populated doc, or { _id } */
 function idString(ref) {
@@ -112,6 +116,15 @@ router.put('/:rideId/accept', authenticateJWT, requireUserType('driver'), async 
       return res.status(400).json({ error: 'Ride already accepted by another driver' });
     }
 
+    // Enforce minimum wallet balance before accepting rides.
+    const driverProfile = await Driver.findOne({ user: req.user._id }).lean();
+    if (driverProfile) {
+      const minimum = await getDriverMinimumWalletPkr();
+      if (Number(driverProfile.wallet?.balance || 0) < Number(minimum || 0)) {
+        return res.status(403).json({ error: `Insufficient wallet balance. Minimum required is ${minimum} PKR` });
+      }
+    }
+
     ride.driver = req.user._id;
     ride.status = 'accepted';
     await ride.save();
@@ -188,7 +201,34 @@ router.put('/:rideId/complete', authenticateJWT, async (req, res) => {
 
     ride.status = 'completed';
     ride.endTime = new Date();
+
+    // Ensure rideType is set for commission.
+    if (!ride.rideType) {
+      ride.rideType = normalizeRideTypeKey('ride_mini');
+    }
     await ride.save();
+
+    // Deduct driver commission from wallet (best-effort).
+    if (ride.driver) {
+      try {
+        const fare = ride.price?.amount || 0;
+        const vehicleType = ride.rideType || 'ride_mini';
+        const result = await deductDriverCommissionForRide({
+          rideId: ride._id,
+          driverUserId: ride.driver,
+          vehicleType,
+          fareAmount: fare,
+        });
+        if (result?.deducted) {
+          ride.driverCommissionPct = result.pct || 0;
+          ride.driverCommissionAmount = result.amount || 0;
+          ride.commissionDeductedAt = new Date();
+          await ride.save();
+        }
+      } catch {
+        // ignore
+      }
+    }
 
     // Update user statistics
     await User.findByIdAndUpdate(ride.rider, { $inc: { totalRides: 1 } });

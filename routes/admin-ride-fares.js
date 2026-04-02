@@ -22,6 +22,7 @@ router.get('/ride-fare-settings', authenticateAdminJWT, async (req, res) => {
 router.patch('/ride-fare-settings', authenticateAdminJWT, async (req, res) => {
   try {
     const body = req.body?.rideTypes || req.body || {};
+    const incomingCommission = req.body?.driverCommissionPct || req.body?.commission || null;
     const doc = await RideFareSettings.getSingleton();
     const prev = doc.rideTypes ? JSON.parse(JSON.stringify(doc.rideTypes)) : {};
     const next = { ...prev };
@@ -37,6 +38,22 @@ router.patch('/ride-fare-settings', authenticateAdminJWT, async (req, res) => {
     }
 
     doc.rideTypes = next;
+
+    // Driver commission updates (optional)
+    if (incomingCommission && typeof incomingCommission === 'object') {
+      const prevC = doc.driverCommissionPct ? JSON.parse(JSON.stringify(doc.driverCommissionPct)) : {};
+      const nextC = { ...prevC };
+      for (const key of RIDE_TYPE_KEYS) {
+        if (incomingCommission[key] == null) continue;
+        const pct = Number(incomingCommission[key]);
+        if (!Number.isFinite(pct) || pct < 0 || pct > 50) {
+          return res.status(400).json({ error: `Invalid driverCommissionPct for ${key} (0–50)` });
+        }
+        nextC[key] = Math.round(pct * 100) / 100;
+      }
+      doc.driverCommissionPct = nextC;
+    }
+
     await doc.save();
     const merged = await getPublicFareResponse();
     return res.json({

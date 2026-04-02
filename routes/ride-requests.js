@@ -8,6 +8,8 @@ const { buildDriverFareOfferEnrichment } = require('../utils/driverFareOfferEnri
 const { getSystemSettings } = require('../lib/systemSettings');
 const { getServiceUnavailableZoneAt } = require('../lib/serviceZones');
 const { registerRiderCancellationForPenalty } = require('../lib/registerNoArrivalCancellation');
+const Driver = require('../models/Driver');
+const { getDriverMinimumWalletPkr } = require('../lib/walletSettings');
 
 /** Same delivery semantics as server.js emitToUser (user room + legacy socket id). */
 function emitToUserFromApp(req, userId, event, payload) {
@@ -763,6 +765,15 @@ router.post('/:requestId/respond', authenticateJWT, async (req, res) => {
     // Check if user is a driver
     if (req.user.userType !== 'driver') {
       return res.status(403).json({ error: 'Only drivers can respond to requests' });
+    }
+
+    // Enforce minimum wallet balance before letting driver send offers / accept.
+    const driverProfile = await Driver.findOne({ user: req.user._id }).lean();
+    if (driverProfile) {
+      const minimum = await getDriverMinimumWalletPkr();
+      if (Number(driverProfile.wallet?.balance || 0) < Number(minimum || 0)) {
+        return res.status(403).json({ error: `Insufficient wallet balance. Minimum required is ${minimum} PKR` });
+      }
     }
 
     const rideRequest = await RideRequest.findById(requestId);

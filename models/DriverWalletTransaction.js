@@ -7,6 +7,12 @@ const driverWalletTransactionSchema = new mongoose.Schema({
     required: true,
     index: true
   },
+  rideId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Ride',
+    default: null,
+    index: true,
+  },
   transactionType: {
     type: String,
     enum: ['cash_in', 'cash_out', 'ride_deduction', 'refund'],

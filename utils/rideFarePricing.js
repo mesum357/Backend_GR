@@ -38,6 +38,18 @@ async function loadStoredRideTypes() {
   return row?.rideTypes || {};
 }
 
+async function loadStoredCommission() {
+  const row = await RideFareSettings.findOne().lean();
+  return row?.driverCommissionPct || {};
+}
+
+function commissionPctFromStored(commissionDoc, key) {
+  const raw = commissionDoc?.[key];
+  const num = Number(raw);
+  if (Number.isFinite(num) && num >= 0) return Math.min(50, Math.max(0, num));
+  return 0;
+}
+
 async function getSuggestedPrice(distanceKm, vehicleType) {
   const key = normalizeRideTypeKey(vehicleType);
   const stored = await loadStoredRideTypes();
@@ -49,6 +61,7 @@ async function getSuggestedPrice(distanceKm, vehicleType) {
 
 async function getPublicFareResponse() {
   const stored = await loadStoredRideTypes();
+  const commissionDoc = await loadStoredCommission();
   const rideTypes = {};
   for (const key of RIDE_TYPE_KEYS) {
     const { baseFare, minFare, defaultPerKm } = STATIC[key];
@@ -57,9 +70,16 @@ async function getPublicFareResponse() {
       minFare,
       perKm: perKmFromStored(stored, key),
       defaultPerKm,
+      driverCommissionPct: commissionPctFromStored(commissionDoc, key),
     };
   }
   return { rideTypes };
+}
+
+async function getDriverCommissionPctForRideType(vehicleType) {
+  const key = normalizeRideTypeKey(vehicleType);
+  const commissionDoc = await loadStoredCommission();
+  return commissionPctFromStored(commissionDoc, key);
 }
 
 module.exports = {
@@ -68,4 +88,5 @@ module.exports = {
   normalizeRideTypeKey,
   getSuggestedPrice,
   getPublicFareResponse,
+  getDriverCommissionPctForRideType,
 };

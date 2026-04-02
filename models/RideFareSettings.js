@@ -9,6 +9,13 @@ const rideFareSettingsSchema = new mongoose.Schema(
       ride_ac: { perKm: { type: Number, min: 1, max: 500 } },
       premium: { perKm: { type: Number, min: 1, max: 500 } },
     },
+    /** Driver commission percentage per ride type (0–50). */
+    driverCommissionPct: {
+      moto: { type: Number, min: 0, max: 50, default: 0 },
+      ride_mini: { type: Number, min: 0, max: 50, default: 0 },
+      ride_ac: { type: Number, min: 0, max: 50, default: 0 },
+      premium: { type: Number, min: 0, max: 50, default: 0 },
+    },
   },
   { timestamps: true }
 );

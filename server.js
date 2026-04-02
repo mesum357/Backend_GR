@@ -109,6 +109,10 @@ const serviceZonesRoutes = require('./routes/service-zones');
 const adminPenaltiesRoutes = require('./routes/admin-penalties');
 const adminAppUpdatesRoutes = require('./routes/admin-app-updates');
 const appUpdatesRoutes = require('./routes/app-updates');
+const adminNotificationCenterRoutes = require('./routes/admin-notification-center');
+const notificationCenterRoutes = require('./routes/notification-center');
+const { deductDriverCommissionForRide } = require('./lib/driverCommission');
+const { normalizeRideTypeKey } = require('./utils/rideFarePricing');
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -133,9 +137,11 @@ app.use('/api/admin', adminRideFaresRoutes);
 app.use('/api/admin', adminEmergencyRidesRoutes);
 app.use('/api/admin', adminPenaltiesRoutes);
 app.use('/api/admin', adminAppUpdatesRoutes);
+app.use('/api/admin', adminNotificationCenterRoutes);
 app.use('/api', systemSettingsRoutes);
 app.use('/api', serviceZonesRoutes);
 app.use('/api', appUpdatesRoutes);
+app.use('/api', notificationCenterRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -1094,6 +1100,7 @@ io.on('connection', (socket) => {
               },
             },
             status: 'completed',
+            rideType: normalizeRideTypeKey(rideRequest.vehicleType || 'ride_mini'),
             price: {
               amount: rideRequest.requestedPrice || rideRequest.suggestedPrice || 0,
               currency: 'PKR',
@@ -1115,6 +1122,31 @@ io.on('connection', (socket) => {
         }
       } catch (bridgeErr) {
         console.error('end_ride Ride bridge error (non-fatal):', bridgeErr?.message || bridgeErr);
+      }
+
+      // Deduct commission (idempotent via DriverWalletTransaction.rideId)
+      try {
+        const driverUserId = effectiveDriverId || driverId;
+        if (driverUserId) {
+          const fare = rideRequest.requestedPrice || rideRequest.suggestedPrice || 0;
+          const result = await deductDriverCommissionForRide({
+            rideId: rideRequest._id,
+            driverUserId,
+            vehicleType: rideRequest.vehicleType || 'ride_mini',
+            fareAmount: fare,
+          });
+          if (result?.deducted) {
+            await Ride.findByIdAndUpdate(rideRequest._id, {
+              $set: {
+                driverCommissionPct: result.pct || 0,
+                driverCommissionAmount: result.amount || 0,
+                commissionDeductedAt: new Date(),
+              },
+            });
+          }
+        }
+      } catch (e) {
+        // ignore
       }
 
       console.log(`✅ Ride ${rideRequestId} completed by driver ${effectiveDriverId || driverId}`);
