@@ -107,6 +107,8 @@ const adminEmergencyRidesRoutes = require('./routes/admin-emergency-rides');
 const systemSettingsRoutes = require('./routes/system-settings');
 const serviceZonesRoutes = require('./routes/service-zones');
 const adminPenaltiesRoutes = require('./routes/admin-penalties');
+const adminAppUpdatesRoutes = require('./routes/admin-app-updates');
+const appUpdatesRoutes = require('./routes/app-updates');
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -130,8 +132,10 @@ app.use('/api/ride-fares', rideFaresRoutes);
 app.use('/api/admin', adminRideFaresRoutes);
 app.use('/api/admin', adminEmergencyRidesRoutes);
 app.use('/api/admin', adminPenaltiesRoutes);
+app.use('/api/admin', adminAppUpdatesRoutes);
 app.use('/api', systemSettingsRoutes);
 app.use('/api', serviceZonesRoutes);
+app.use('/api', appUpdatesRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

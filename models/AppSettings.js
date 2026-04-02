@@ -79,6 +79,16 @@ const appSettingsSchema = new mongoose.Schema(
       jazzcash: { type: easypaisaJazzSchema, default: () => ({}) },
       bank: { type: bankSchema, default: () => ({}) },
     },
+
+    /** App update management (single platform config; rider/driver separated). */
+    appUpdateForceEnabled: { type: Boolean, default: false },
+    riderAppCurrentVersion: { type: String, default: '' },
+    riderAppMinVersion: { type: String, default: '' },
+    driverAppCurrentVersion: { type: String, default: '' },
+    driverAppMinVersion: { type: String, default: '' },
+    appUpdateMessage: { type: String, default: 'A new version is available. Please update to continue.' },
+    appUpdatePlayStoreUrl: { type: String, default: '' },
+    appUpdateAppStoreUrl: { type: String, default: '' },
   },
   { timestamps: true }
 );
