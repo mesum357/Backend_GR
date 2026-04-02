@@ -111,6 +111,7 @@ const adminAppUpdatesRoutes = require('./routes/admin-app-updates');
 const appUpdatesRoutes = require('./routes/app-updates');
 const adminNotificationCenterRoutes = require('./routes/admin-notification-center');
 const notificationCenterRoutes = require('./routes/notification-center');
+const adminLiveRidesRoutes = require('./routes/admin-live-rides');
 const { deductDriverCommissionForRide } = require('./lib/driverCommission');
 const { normalizeRideTypeKey } = require('./utils/rideFarePricing');
 
@@ -138,6 +139,7 @@ app.use('/api/admin', adminEmergencyRidesRoutes);
 app.use('/api/admin', adminPenaltiesRoutes);
 app.use('/api/admin', adminAppUpdatesRoutes);
 app.use('/api/admin', adminNotificationCenterRoutes);
+app.use('/api/admin', adminLiveRidesRoutes);
 app.use('/api', systemSettingsRoutes);
 app.use('/api', serviceZonesRoutes);
 app.use('/api', appUpdatesRoutes);
@@ -769,7 +771,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Real-time chat between rider and assigned driver (no persistence)
+  // Real-time chat between rider and assigned driver (persisted for admin review)
   socket.on('ride_chat_message', async (data) => {
     try {
       const { rideRequestId, senderId, senderType, text, timestamp } = data || {};
@@ -813,6 +815,20 @@ io.on('connection', (socket) => {
         text: trimmed,
         timestamp: typeof timestamp === 'number' ? timestamp : Date.now(),
       };
+
+      // Best-effort persistence for admin "Live Rides" communication log.
+      try {
+        const RideChatMessage = require('./models/RideChatMessage');
+        await RideChatMessage.create({
+          rideRequest: rideRequestId,
+          sender,
+          senderType,
+          text: trimmed,
+          timestamp: payload.timestamp,
+        });
+      } catch (persistErr) {
+        console.error('ride_chat_message persist error (non-fatal):', persistErr?.message || persistErr);
+      }
 
       // Echo to sender + forward to recipient (if connected)
       socket.emit('ride_chat_message', payload);
