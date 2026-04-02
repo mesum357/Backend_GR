@@ -270,16 +270,13 @@ io.on('connection', (socket) => {
       }
 
       // Enforce minimum wallet balance before allowing offers to reach the rider.
-      try {
-        const { getDriverMinimumWalletPkr } = require('./lib/walletSettings');
-        const minimum = await getDriverMinimumWalletPkr();
-        const bal = Number(driverDoc?.wallet?.balance || 0);
-        if (bal < Number(minimum || 0)) {
-          socket.emit('error', { message: `Insufficient wallet balance. Minimum required is ${minimum} PKR` });
-          return;
-        }
-      } catch {
-        // ignore wallet setting failures
+      // IMPORTANT: fail-closed. If we cannot verify wallet/minimum, do NOT emit to rider.
+      const { getDriverMinimumWalletPkr } = require('./lib/walletSettings');
+      const minimum = await getDriverMinimumWalletPkr();
+      const bal = Number(driverDoc?.wallet?.balance || 0);
+      if (bal < Number(minimum || 0)) {
+        socket.emit('error', { message: `Insufficient wallet balance. Minimum required is ${minimum} PKR` });
+        return;
       }
 
       if (action === 'accept') {
@@ -380,16 +377,13 @@ io.on('connection', (socket) => {
       }
 
       // Enforce minimum wallet balance before allowing offers to reach the rider.
-      try {
-        const { getDriverMinimumWalletPkr } = require('./lib/walletSettings');
-        const minimum = await getDriverMinimumWalletPkr();
-        const bal = Number(driverDoc?.wallet?.balance || 0);
-        if (bal < Number(minimum || 0)) {
-          socket.emit('error', { message: `Insufficient wallet balance. Minimum required is ${minimum} PKR` });
-          return;
-        }
-      } catch {
-        // ignore wallet setting failures
+      // IMPORTANT: fail-closed. If we cannot verify wallet/minimum, do NOT emit to rider.
+      const { getDriverMinimumWalletPkr } = require('./lib/walletSettings');
+      const minimum = await getDriverMinimumWalletPkr();
+      const bal = Number(driverDoc?.wallet?.balance || 0);
+      if (bal < Number(minimum || 0)) {
+        socket.emit('error', { message: `Insufficient wallet balance. Minimum required is ${minimum} PKR` });
+        return;
       }
 
       const enriched = await buildDriverFareOfferEnrichment(driverId);
