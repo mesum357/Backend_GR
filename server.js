@@ -263,13 +263,23 @@ io.on('connection', (socket) => {
       // Prevent deactivated (warning/penalty) drivers from interacting with ride requests.
       // This is enforced server-side because deactivation is based on DB fields.
       const Driver = require('./models/Driver');
-      const driverDoc = await Driver.findOne({
-        user: driverId,
-        accountDeactivatedUntil: { $gt: new Date() },
-      }).lean();
-      if (driverDoc) {
+      const driverDoc = await Driver.findOne({ user: driverId }).lean();
+      if (driverDoc?.accountDeactivatedUntil && new Date(driverDoc.accountDeactivatedUntil).getTime() > Date.now()) {
         socket.emit('error', { message: 'Driver account is temporarily deactivated' });
         return;
+      }
+
+      // Enforce minimum wallet balance before allowing offers to reach the rider.
+      try {
+        const { getDriverMinimumWalletPkr } = require('./lib/walletSettings');
+        const minimum = await getDriverMinimumWalletPkr();
+        const bal = Number(driverDoc?.wallet?.balance || 0);
+        if (bal < Number(minimum || 0)) {
+          socket.emit('error', { message: `Insufficient wallet balance. Minimum required is ${minimum} PKR` });
+          return;
+        }
+      } catch {
+        // ignore wallet setting failures
       }
 
       if (action === 'accept') {
@@ -363,13 +373,23 @@ io.on('connection', (socket) => {
       }
 
       const Driver = require('./models/Driver');
-      const driverDoc = await Driver.findOne({
-        user: driverId,
-        accountDeactivatedUntil: { $gt: new Date() },
-      }).lean();
-      if (driverDoc) {
+      const driverDoc = await Driver.findOne({ user: driverId }).lean();
+      if (driverDoc?.accountDeactivatedUntil && new Date(driverDoc.accountDeactivatedUntil).getTime() > Date.now()) {
         socket.emit('error', { message: 'Driver account is temporarily deactivated' });
         return;
+      }
+
+      // Enforce minimum wallet balance before allowing offers to reach the rider.
+      try {
+        const { getDriverMinimumWalletPkr } = require('./lib/walletSettings');
+        const minimum = await getDriverMinimumWalletPkr();
+        const bal = Number(driverDoc?.wallet?.balance || 0);
+        if (bal < Number(minimum || 0)) {
+          socket.emit('error', { message: `Insufficient wallet balance. Minimum required is ${minimum} PKR` });
+          return;
+        }
+      } catch {
+        // ignore wallet setting failures
       }
 
       const enriched = await buildDriverFareOfferEnrichment(driverId);
