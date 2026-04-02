@@ -6,6 +6,7 @@ const Driver = require('../models/Driver');
 const { authenticateJWT } = require('../middleware/auth');
 const { buildDriverFareOfferEnrichment } = require('../utils/driverFareOfferEnrichment');
 const { getSystemSettings } = require('../lib/systemSettings');
+const { getServiceUnavailableZoneAt } = require('../lib/serviceZones');
 
 /** Same delivery semantics as server.js emitToUser (user room + legacy socket id). */
 function emitToUserFromApp(req, userId, event, payload) {
@@ -82,6 +83,12 @@ router.post('/create', authenticateJWT, async (req, res) => {
     // Validate required fields
     if (!pickupLocation || !destination) {
       return res.status(400).json({ error: 'Pickup and destination locations are required' });
+    }
+
+    // Service zone validation: block ride requests in “service unavailable” areas.
+    const blockedZone = await getServiceUnavailableZoneAt(pickupLocation.latitude, pickupLocation.longitude);
+    if (blockedZone) {
+      return res.status(403).json({ error: 'Service is not available in this area' });
     }
 
     // Check if user is a rider
@@ -174,6 +181,12 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
       return res.status(400).json({
         error: 'Pickup location, destination, and offered fare are required'
       });
+    }
+
+    // Service zone validation: block ride requests in “service unavailable” areas.
+    const blockedZone = await getServiceUnavailableZoneAt(pickup.latitude, pickup.longitude);
+    if (blockedZone) {
+      return res.status(403).json({ error: 'Service is not available in this area' });
     }
 
     // Check if user is a rider
