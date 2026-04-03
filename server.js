@@ -913,6 +913,43 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Throttled live GPS during active ride (rider <-> driver maps)
+  socket.on('ride_live_location', async (data) => {
+    try {
+      const { rideRequestId, senderId, senderType, latitude, longitude } = data || {};
+      if (!rideRequestId || !senderId || !senderType) return;
+      if (typeof latitude !== 'number' || typeof longitude !== 'number') return;
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+
+      const RideRequest = require('./models/RideRequest');
+      const rideRequest = await RideRequest.findById(rideRequestId).select('rider acceptedBy status');
+      if (!rideRequest) return;
+
+      const riderId = (rideRequest.rider || '').toString();
+      const driverId = (rideRequest.acceptedBy || '').toString();
+      const sid = senderId.toString();
+      if (sid !== riderId && sid !== driverId) return;
+
+      const payload = {
+        rideRequestId: String(rideRequestId),
+        senderType,
+        latitude,
+        longitude,
+        timestamp: Date.now(),
+      };
+
+      if (senderType === 'rider') {
+        const driverSocketId = driverConnections.get(driverId);
+        if (driverSocketId) io.to(driverSocketId).emit('ride_live_location', payload);
+      } else if (senderType === 'driver') {
+        const riderSocketId = activeConnections.get(riderId);
+        if (riderSocketId) io.to(riderSocketId).emit('ride_live_location', payload);
+      }
+    } catch (err) {
+      console.error('Error handling ride_live_location:', err);
+    }
+  });
+
   // Real-time chat between rider and assigned driver (persisted for admin review)
   socket.on('ride_chat_message', async (data) => {
     try {
