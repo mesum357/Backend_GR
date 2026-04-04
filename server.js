@@ -7,6 +7,7 @@ const rateLimit = require('express-rate-limit');
 const passport = require('passport');
 const session = require('express-session');
 const http = require('http');
+const crypto = require('crypto');
 const socketIo = require('socket.io');
 require('dotenv').config();
 
@@ -29,12 +30,33 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const RATE_LIMIT_MAX_PER_WINDOW = Number(process.env.API_RATE_LIMIT_MAX_PER_MINUTE || 600);
+
+function apiRateLimitKey(req) {
+  const auth = req.headers?.authorization;
+  if (auth && typeof auth === 'string' && auth.startsWith('Bearer ') && auth.length > 24) {
+    const hash = crypto.createHash('sha256').update(auth).digest('hex').slice(0, 32);
+    return `user:${hash}`;
+  }
+  return `ip:${req.ip || 'unknown'}`;
+}
+
 const apiLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 240,
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  max: Math.max(120, Math.min(RATE_LIMIT_MAX_PER_WINDOW, 5000)),
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Too many requests, please slow down.' },
+  keyGenerator: (req) => apiRateLimitKey(req),
+  skip: (req) => {
+    const path = (req.originalUrl || req.url || '').split('?')[0];
+    return path === '/api/health' || path.endsWith('/api/health');
+  },
+  message: {
+    error: 'RATE_LIMIT',
+    message:
+      'Too many actions in a short time. Please wait a few seconds and try again.',
+  },
 });
 app.use('/api', apiLimiter);
 // Some clients send JSON with only Authorization in headers; shallow merge drops Content-Type and
