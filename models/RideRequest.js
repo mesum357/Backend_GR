@@ -117,6 +117,9 @@ const rideRequestSchema = new mongoose.Schema({
   },
   emergencyTriggeredAt: { type: Date, default: null },
   emergencyResolvedAt: { type: Date, default: null },
+
+  /** Encoded Directions overview polyline — computed once server-side when ride is matched (Rule 3). */
+  routeOverviewPolyline: { type: String, default: '' },
   
   // Payment method
   paymentMethod: {

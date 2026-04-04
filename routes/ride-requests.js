@@ -10,6 +10,7 @@ const { getServiceUnavailableZoneAt } = require('../lib/serviceZones');
 const { registerRiderCancellationForPenalty } = require('../lib/registerNoArrivalCancellation');
 const { getDriverMinimumWalletPkr } = require('../lib/walletSettings');
 const { deductDriverCommissionForRide } = require('../lib/driverCommission');
+const { ensureRideRoutePolylineSaved } = require('../services/ensureRideRoutePolyline');
 
 /** Same delivery semantics as server.js emitToUser (user room + legacy socket id). */
 function emitToUserFromApp(req, userId, event, payload) {
@@ -417,6 +418,7 @@ router.get('/:id/status', authenticateJWT, async (req, res) => {
         createdAt: rideRequest.createdAt,
         acceptedBy: rideRequest.acceptedBy,
         riderArrivedAt: rideRequest.riderArrivedAt,
+        routeOverviewPolyline: rideRequest.routeOverviewPolyline || '',
         availableDrivers: rideRequest.availableDrivers,
         emergencyStatus: rideRequest.emergencyStatus,
         emergencyTriggeredAt: rideRequest.emergencyTriggeredAt,
@@ -945,6 +947,7 @@ router.post('/:requestId/accept-counter-offer', authenticateJWT, async (req, res
     driverResponse.respondedAt = new Date();
 
     await rideRequest.save();
+    await ensureRideRoutePolylineSaved(rideRequest);
 
     res.json({
       message: 'Counter offer accepted successfully',
@@ -952,7 +955,8 @@ router.post('/:requestId/accept-counter-offer', authenticateJWT, async (req, res
         id: rideRequest._id,
         status: rideRequest.status,
         acceptedBy: rideRequest.acceptedBy,
-        finalPrice: driverResponse.counterOffer
+        finalPrice: driverResponse.counterOffer,
+        routeOverviewPolyline: rideRequest.routeOverviewPolyline || '',
       }
     });
 

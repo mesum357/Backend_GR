@@ -15,6 +15,7 @@ require('./config/passport');
 
 // Import Firebase configuration
 const firebase = require('./config/firebase');
+const { ensureRideRoutePolylineSaved } = require('./services/ensureRideRoutePolyline');
 
 const app = express();
 
@@ -749,6 +750,9 @@ io.on('connection', (socket) => {
       }
 
       await rideRequest.save();
+      if (action === 'accept') {
+        await ensureRideRoutePolylineSaved(rideRequest);
+      }
 
       // Notify driver about the response
       emitToUser(io, targetOffer.driver, 'fare_response', {
@@ -844,6 +848,7 @@ io.on('connection', (socket) => {
       rideRequest.acceptedBy = driverId;
       rideRequest.requestedPrice = counterOfferDriver.counterOffer;
       await rideRequest.save();
+      await ensureRideRoutePolylineSaved(rideRequest);
 
       // Notify driver
       const driverSocketId = driverConnections.get(driverId);
@@ -920,7 +925,7 @@ io.on('connection', (socket) => {
   // Throttled live GPS during active ride (rider <-> driver maps)
   socket.on('ride_live_location', async (data) => {
     try {
-      const { rideRequestId, senderId, senderType, latitude, longitude } = data || {};
+      const { rideRequestId, senderId, senderType, latitude, longitude, heading } = data || {};
       if (!rideRequestId || !senderId || !senderType) return;
       if (typeof latitude !== 'number' || typeof longitude !== 'number') return;
       if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
@@ -940,6 +945,7 @@ io.on('connection', (socket) => {
         latitude,
         longitude,
         timestamp: Date.now(),
+        ...(typeof heading === 'number' && Number.isFinite(heading) ? { heading } : {}),
       };
 
       if (senderType === 'rider') {

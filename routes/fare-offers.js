@@ -3,6 +3,7 @@ const router = express.Router();
 const RideRequest = require('../models/RideRequest');
 const User = require('../models/User');
 const { authenticateJWT } = require('../middleware/auth');
+const { ensureRideRoutePolylineSaved } = require('../services/ensureRideRoutePolyline');
 
 // Driver makes a fare offer
 router.post('/offer', authenticateJWT, async (req, res) => {
@@ -131,6 +132,10 @@ router.post('/:offerId/respond', authenticateJWT, async (req, res) => {
 
     await rideRequest.save();
 
+    if (action === 'accept') {
+      await ensureRideRoutePolylineSaved(rideRequest);
+    }
+
     console.log(`💰 Rider ${riderId} ${action}ed fare offer ${offerId}`);
 
     res.json({
@@ -138,7 +143,8 @@ router.post('/:offerId/respond', authenticateJWT, async (req, res) => {
       rideRequest: {
         id: rideRequest._id,
         status: rideRequest.status,
-        acceptedBy: rideRequest.acceptedBy
+        acceptedBy: rideRequest.acceptedBy,
+        routeOverviewPolyline: rideRequest.routeOverviewPolyline || '',
       }
     });
 

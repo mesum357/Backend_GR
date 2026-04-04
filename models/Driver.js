@@ -121,6 +121,9 @@ const driverSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
   lastActive: { type: Date, default: Date.now },
+
+  /** H3 cell (res 9) for free hex matching — updated with GPS (Rule 5). */
+  activeH3Cell: { type: String, default: null, index: true },
 });
 
 // Index for geospatial queries
@@ -157,12 +160,23 @@ driverSchema.methods.updateLocation = async function(latitude, longitude) {
   this.currentLocation.coordinates = coords;
   this.lastActive = lastActive;
 
-  await this.updateOne({
-    $set: {
-      'currentLocation.coordinates': coords,
-      lastActive,
-    },
-  });
+  let activeH3Cell = null;
+  try {
+    const { latLngToCell } = require('h3-js');
+    activeH3Cell = latLngToCell(latitude, longitude, 9);
+  } catch (_) {
+    // h3-js optional until npm install
+  }
+
+  const $set = {
+    'currentLocation.coordinates': coords,
+    lastActive,
+  };
+  if (activeH3Cell) {
+    $set.activeH3Cell = activeH3Cell;
+  }
+
+  await this.updateOne({ $set });
 
   return this;
 };
@@ -183,26 +197,58 @@ driverSchema.methods.calculateRating = function(newRating) {
   return this.save();
 };
 
-// Static method to find nearby available drivers
-driverSchema.statics.findNearbyDrivers = async function(latitude, longitude, maxDistance = 5) {
+const driverOnlineFilter = {
+  isOnline: true,
+  isAvailable: true,
+  isApproved: true,
+  $or: [
+    { accountDeactivatedUntil: null },
+    { accountDeactivatedUntil: { $lte: new Date() } },
+  ],
+};
+
+driverSchema.statics.findNearbyDriversByH3 = async function (
+  latitude,
+  longitude,
+  ringK = 1
+) {
+  const { latLngToCell, gridDisk } = require('h3-js');
+  const center = latLngToCell(latitude, longitude, 9);
+  const cells = gridDisk(center, ringK);
   return await this.find({
-    isOnline: true,
-    isAvailable: true,
-    isApproved: true,
-    $or: [
-      { accountDeactivatedUntil: null },
-      { accountDeactivatedUntil: { $lte: new Date() } },
-    ],
+    ...driverOnlineFilter,
+    activeH3Cell: { $in: cells },
+  })
+    .populate('user', 'firstName lastName phone rating')
+    .limit(20);
+};
+
+// Static method to find nearby available drivers
+driverSchema.statics.findNearbyDrivers = async function (latitude, longitude, maxDistance = 5) {
+  if (process.env.USE_H3_DRIVER_MATCHING === 'true') {
+    try {
+      const h3Drivers = await this.findNearbyDriversByH3(latitude, longitude, 1);
+      if (h3Drivers.length > 0) {
+        return h3Drivers;
+      }
+    } catch (e) {
+      console.warn('H3 driver matching failed, falling back to $near:', e?.message || e);
+    }
+  }
+  return await this.find({
+    ...driverOnlineFilter,
     currentLocation: {
       $near: {
         $geometry: {
           type: 'Point',
-          coordinates: [longitude, latitude]
+          coordinates: [longitude, latitude],
         },
-        $maxDistance: maxDistance * 1000 // Convert km to meters
-      }
-    }
-  }).populate('user', 'firstName lastName phone rating').limit(20);
+        $maxDistance: maxDistance * 1000,
+      },
+    },
+  })
+    .populate('user', 'firstName lastName phone rating')
+    .limit(20);
 };
 
 // Static method to create driver profile
