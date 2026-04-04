@@ -200,16 +200,18 @@ rideRequestSchema.statics.createRequest = async function(rideData) {
     request.requestRadius = Number(systemSettings.maxRideRadiusKm);
   }
   
-  // Calculate distance
-  request.distance = request.calculateDistance(
+  // Haversine straight-line distance * road multiplier for mountainous/urban Gilgit roads
+  const straightLine = request.calculateDistance(
     request.pickupLocation.latitude,
     request.pickupLocation.longitude,
     request.destination.latitude,
     request.destination.longitude
   );
-  
-  // Calculate estimated duration (assuming 30 km/h average speed)
-  request.estimatedDuration = Math.round(request.distance * 2); // 2 minutes per km
+  const ROAD_DISTANCE_MULTIPLIER = 1.4;
+  request.distance = Math.round(straightLine * ROAD_DISTANCE_MULTIPLIER * 100) / 100;
+
+  const AVG_CITY_SPEED_KPH = 25;
+  request.estimatedDuration = Math.max(2, Math.round((request.distance / AVG_CITY_SPEED_KPH) * 60));
   
   const { getSuggestedPrice } = require('../utils/rideFarePricing');
   request.suggestedPrice = await getSuggestedPrice(request.distance, request.vehicleType);

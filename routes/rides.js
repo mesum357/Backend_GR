@@ -67,14 +67,19 @@ router.post('/book', authenticateJWT, requireUserType('rider'), async (req, res)
 // Get available rides for drivers
 router.get('/available', authenticateJWT, requireUserType('driver'), async (req, res) => {
   try {
-    const { latitude, longitude, radius = 5000 } = req.query; // radius in meters
+    const { latitude, longitude, radius = 5000, limit = 20 } = req.query;
+    const cap = Math.min(parseInt(limit) || 20, 50);
 
     const rides = await Ride.find({
       status: 'pending',
       driver: null
-    }).populate('rider', 'firstName lastName rating');
+    })
+      .populate('rider', 'firstName lastName rating')
+      .select('pickup destination distance duration price status createdAt rider')
+      .sort({ createdAt: -1 })
+      .limit(cap)
+      .lean();
 
-    // Filter rides by distance if coordinates provided
     let filteredRides = rides;
     if (latitude && longitude) {
       filteredRides = rides.filter(ride => {
@@ -84,7 +89,7 @@ router.get('/available', authenticateJWT, requireUserType('driver'), async (req,
           ride.pickup.location.coordinates[1],
           ride.pickup.location.coordinates[0]
         );
-        return distance <= radius / 1000; // Convert to km
+        return distance <= radius / 1000;
       });
     }
 
@@ -260,9 +265,11 @@ router.put('/:rideId/cancel', authenticateJWT, async (req, res) => {
       return res.status(404).json({ error: 'Ride not found' });
     }
 
-    // Check if user is the driver or rider
-    if (ride.driver.toString() !== req.user._id.toString() && 
-        ride.rider.toString() !== req.user._id.toString()) {
+    const jwtUid = authUserIdString(req.user);
+    const rRider = idString(ride.rider);
+    const rDriver = idString(ride.driver);
+
+    if (rRider !== jwtUid && rDriver !== jwtUid) {
       return res.status(403).json({ error: 'Not authorized' });
     }
 
@@ -272,7 +279,7 @@ router.put('/:rideId/cancel', authenticateJWT, async (req, res) => {
 
     ride.status = 'cancelled';
     ride.cancellationReason = reason;
-    ride.cancelledBy = ride.driver.toString() === req.user._id.toString() ? 'driver' : 'rider';
+    ride.cancelledBy = rDriver && rDriver === jwtUid ? 'driver' : 'rider';
     await ride.save();
 
     await ride.populate(['rider', 'driver'], 'firstName lastName phone rating');
@@ -541,9 +548,11 @@ router.get('/:rideId', authenticateJWT, async (req, res) => {
       return res.status(404).json({ error: 'Ride not found' });
     }
 
-    // Check if user is authorized to view this ride
-    if (ride.rider.toString() !== req.user._id.toString() && 
-        (!ride.driver || ride.driver.toString() !== req.user._id.toString())) {
+    const jwtUid = authUserIdString(req.user);
+    const rideRiderId = idString(ride.rider);
+    const rideDriverId = idString(ride.driver);
+
+    if (rideRiderId !== jwtUid && rideDriverId !== jwtUid) {
       return res.status(403).json({ error: 'Not authorized' });
     }
 

@@ -2,6 +2,10 @@ const mongoose = require('mongoose');
 const User = require('../models/User');
 const Driver = require('../models/Driver');
 
+// Short-lived cache: driver profile changes rarely during a ride session
+const ENRICHMENT_CACHE_TTL_MS = 60 * 1000; // 1 minute
+const enrichmentCache = new Map(); // driverUserId -> { data, fetchedAt }
+
 /**
  * Build display fields for rider fare-offer UIs from the driver's User id.
  * @param {import('mongoose').Types.ObjectId|string} driverUserId
@@ -16,6 +20,11 @@ async function buildDriverFareOfferEnrichment(driverUserId) {
       vehicleName: '',
       driverPhoto: '',
     };
+  }
+
+  const cached = enrichmentCache.get(uid);
+  if (cached && Date.now() - cached.fetchedAt < ENRICHMENT_CACHE_TTL_MS) {
+    return cached.data;
   }
 
   const oid = new mongoose.Types.ObjectId(uid);
@@ -58,13 +67,22 @@ async function buildDriverFareOfferEnrichment(driverUserId) {
   if (!parts.length && v.vehicleType) parts.push(String(v.vehicleType));
   const vehicleInfo = parts.length ? parts.join(' · ') : 'Vehicle';
 
-  return {
+  const result = {
     driverName: `${u.firstName || ''} ${u.lastName || ''}`.trim() || 'Driver',
     driverRating: Number(driverDoc.rating) || Number(u.rating) || 0,
     vehicleInfo,
     vehicleName: shortLabel,
     driverPhoto: u.profileImage || '',
   };
+
+  // Evict old entries if cache grows too large
+  if (enrichmentCache.size > 200) {
+    const firstKey = enrichmentCache.keys().next().value;
+    enrichmentCache.delete(firstKey);
+  }
+  enrichmentCache.set(uid, { data: result, fetchedAt: Date.now() });
+
+  return result;
 }
 
 module.exports = { buildDriverFareOfferEnrichment };

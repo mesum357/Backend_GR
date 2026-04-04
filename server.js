@@ -224,6 +224,10 @@ const ridePresenceSubscriberRides = new Map();
 const processedEventIds = new Map(); // eventId -> processedAt
 const PROCESSED_EVENT_TTL_MS = 10 * 60 * 1000;
 
+/** ride_live_location throttle: senderId -> lastRelayTimestamp */
+const liveLocationLastRelay = new Map();
+const LIVE_LOCATION_MIN_INTERVAL_MS = 2000;
+
 const cleanupProcessedEventIds = () => {
   const now = Date.now();
   for (const [eventId, processedAt] of processedEventIds.entries()) {
@@ -231,7 +235,11 @@ const cleanupProcessedEventIds = () => {
       processedEventIds.delete(eventId);
     }
   }
+  for (const [key, ts] of liveLocationLastRelay.entries()) {
+    if (now - ts > 60000) liveLocationLastRelay.delete(key);
+  }
 };
+setInterval(cleanupProcessedEventIds, 60 * 1000);
 
 const isDuplicateEvent = (eventId) => {
   if (!eventId) return false;
@@ -244,6 +252,16 @@ const markEventProcessed = (eventId) => {
   processedEventIds.set(eventId, Date.now());
 };
 
+// Periodic cleanup every 5 minutes so Maps grow bounded even during idle periods
+setInterval(() => {
+  cleanupProcessedEventIds();
+  // Also purge stale ridePresenceParticipants (older than 4 hours — ride should be done by then)
+  const PRESENCE_MAX_AGE_MS = 4 * 60 * 60 * 1000;
+  if (ridePresenceParticipants.size > 500) {
+    ridePresenceParticipants.clear();
+  }
+}, 5 * 60 * 1000).unref();
+
 /** Stable Socket.IO room per user so emits survive reconnect (re-auth re-joins same room). */
 const userSocketRoom = (userId) => {
   const s = userId != null ? String(userId) : '';
@@ -253,8 +271,6 @@ const emitToUser = (io, userId, event, payload) => {
   const uid = userId != null ? String(userId) : '';
   if (!uid) return;
   io.to(`user:${uid}`).emit(event, payload);
-  const sid = activeConnections.get(uid) || driverConnections.get(uid);
-  if (sid) io.to(sid).emit(event, payload);
 };
 
 const { buildDriverFareOfferEnrichment } = require('./utils/driverFareOfferEnrichment');
@@ -453,8 +469,16 @@ io.on('connection', (socket) => {
 
           const enriched = await buildDriverFareOfferEnrichment(driverId);
 
-          // Calculate arrival time (mock calculation - in real app, use actual distance/time)
-          const arrivalTime = Math.floor(Math.random() * 10) + 5; // 5-15 minutes
+          // Estimate arrival from driver distance to pickup using Haversine + average city speed
+          let arrivalTime = 8;
+          try {
+            const driverEntry = (rideRequest.availableDrivers || []).find(
+              (d) => d.driver && d.driver.toString() === String(driverId)
+            );
+            const distKm = driverEntry?.distance || 1;
+            const AVG_CITY_SPEED_KPH = 25;
+            arrivalTime = Math.max(2, Math.round((distKm / AVG_CITY_SPEED_KPH) * 60));
+          } catch (_) { /* fallback to 8 min */ }
 
           const fareAmount =
             (counterOffer != null && Number(counterOffer) > 0 && Number(counterOffer)) ||
@@ -733,12 +757,23 @@ io.on('connection', (socket) => {
         return;
       }
       
-      // Find the ride request
       const RideRequest = require('./models/RideRequest');
       const rideRequest = await RideRequest.findById(rideRequestId);
       
       if (!rideRequest) {
         socket.emit('error', { message: 'Ride request not found' });
+        return;
+      }
+
+      // Reject if the ride request has expired
+      if (rideRequest.expiresAt && new Date(rideRequest.expiresAt).getTime() < Date.now()) {
+        socket.emit('error', { message: 'Ride request has expired' });
+        return;
+      }
+
+      // Reject if already accepted/completed/cancelled
+      if (['accepted', 'completed', 'cancelled', 'in_progress'].includes(rideRequest.status)) {
+        socket.emit('error', { message: 'Ride request is no longer available for fare responses' });
         return;
       }
 
@@ -872,17 +907,14 @@ io.on('connection', (socket) => {
       await rideRequest.save();
       await ensureRideRoutePolylineSaved(rideRequest);
 
-      // Notify driver
-      const driverSocketId = driverConnections.get(driverId);
-      if (driverSocketId) {
-        io.to(driverSocketId).emit('counter_offer_accepted', {
-          rideRequestId,
-          message: 'Your counter offer has been accepted'
-        });
-      }
+      // Notify driver (use room-based delivery for reconnect safety)
+      emitToUser(io, driverId, 'counter_offer_accepted', {
+        rideRequestId,
+        message: 'Your counter offer has been accepted'
+      });
 
       // Notify rider
-      socket.emit('counter_offer_accepted', {
+      emitToUser(io, rideRequest.rider, 'counter_offer_accepted', {
         rideRequestId,
         message: 'Counter offer accepted successfully'
       });
@@ -890,13 +922,10 @@ io.on('connection', (socket) => {
       // Notify other drivers
       rideRequest.availableDrivers.forEach(availableDriver => {
         if (availableDriver.driver.toString() !== driverId) {
-          const driverSocketId = driverConnections.get(availableDriver.driver.toString());
-          if (driverSocketId) {
-            io.to(driverSocketId).emit('ride_request_cancelled', {
-              rideRequestId,
-              message: 'This ride request has been accepted by another driver'
-            });
-          }
+          emitToUser(io, availableDriver.driver.toString(), 'ride_request_cancelled', {
+            rideRequestId,
+            message: 'This ride request has been accepted by another driver'
+          });
         }
       });
 
@@ -926,15 +955,12 @@ io.on('connection', (socket) => {
         rideRequest.riderArrivedAt = new Date();
         await rideRequest.save();
       }
-      const driverSocketId = driverConnections.get(assignedDriverId);
-      if (driverSocketId) {
-        const payload = { rideRequestId, riderId };
-        if (typeof latitude === 'number' && typeof longitude === 'number') {
-          payload.riderLocation = { latitude, longitude };
-        }
-        io.to(driverSocketId).emit('rider_at_pickup', payload);
-        console.log(`📍 Rider ${riderId} confirmed at pickup, notifying driver ${assignedDriverId}`);
+      const payload = { rideRequestId, riderId };
+      if (typeof latitude === 'number' && typeof longitude === 'number') {
+        payload.riderLocation = { latitude, longitude };
       }
+      emitToUser(io, assignedDriverId, 'rider_at_pickup', payload);
+      console.log(`📍 Rider ${riderId} confirmed at pickup, notifying driver ${assignedDriverId}`);
       markEventProcessed(eventId);
       if (typeof ack === 'function') ack({ ok: true, eventId });
     } catch (err) {
@@ -945,6 +971,10 @@ io.on('connection', (socket) => {
   });
 
   // Throttled live GPS during active ride (rider <-> driver maps)
+  // Server-side throttle: one relay per sender per 2 seconds
+  const liveLocLastEmit = new Map(); // `${rideRequestId}:${senderId}` -> timestamp
+  const LIVE_LOC_THROTTLE_MS = 2000;
+
   socket.on('ride_live_location', async (data) => {
     try {
       const { rideRequestId, senderId, senderType, latitude, longitude, heading } = data || {};
@@ -952,30 +982,34 @@ io.on('connection', (socket) => {
       if (typeof latitude !== 'number' || typeof longitude !== 'number') return;
       if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
 
+      const throttleKey = `${rideRequestId}:${senderId}`;
+      const now = Date.now();
+      const lastEmit = liveLocLastEmit.get(throttleKey) || 0;
+      if (now - lastEmit < LIVE_LOC_THROTTLE_MS) return;
+      liveLocLastEmit.set(throttleKey, now);
+
       const RideRequest = require('./models/RideRequest');
-      const rideRequest = await RideRequest.findById(rideRequestId).select('rider acceptedBy status');
+      const rideRequest = await RideRequest.findById(rideRequestId).select('rider acceptedBy status').lean();
       if (!rideRequest) return;
 
-      const riderId = (rideRequest.rider || '').toString();
-      const driverId = (rideRequest.acceptedBy || '').toString();
+      const liveRiderId = (rideRequest.rider || '').toString();
+      const liveDriverId = (rideRequest.acceptedBy || '').toString();
       const sid = senderId.toString();
-      if (sid !== riderId && sid !== driverId) return;
+      if (sid !== liveRiderId && sid !== liveDriverId) return;
 
       const payload = {
         rideRequestId: String(rideRequestId),
         senderType,
         latitude,
         longitude,
-        timestamp: Date.now(),
+        timestamp: now,
         ...(typeof heading === 'number' && Number.isFinite(heading) ? { heading } : {}),
       };
 
       if (senderType === 'rider') {
-        const driverSocketId = driverConnections.get(driverId);
-        if (driverSocketId) io.to(driverSocketId).emit('ride_live_location', payload);
+        emitToUser(io, liveDriverId, 'ride_live_location', payload);
       } else if (senderType === 'driver') {
-        const riderSocketId = activeConnections.get(riderId);
-        if (riderSocketId) io.to(riderSocketId).emit('ride_live_location', payload);
+        emitToUser(io, liveRiderId, 'ride_live_location', payload);
       }
     } catch (err) {
       console.error('Error handling ride_live_location:', err);
@@ -995,7 +1029,7 @@ io.on('connection', (socket) => {
       if (!trimmed) return;
 
       const RideRequest = require('./models/RideRequest');
-      const rideRequest = await RideRequest.findById(rideRequestId).select('rider acceptedBy status');
+      const rideRequest = await RideRequest.findById(rideRequestId).select('rider acceptedBy status').lean();
       if (!rideRequest) {
         socket.emit('error', { message: 'Ride request not found' });
         return;
@@ -1014,10 +1048,7 @@ io.on('connection', (socket) => {
         return;
       }
 
-      const recipientSocketId =
-        senderType === 'rider'
-          ? driverConnections.get(driverId)
-          : activeConnections.get(riderId);
+      const recipientId = senderType === 'rider' ? driverId : riderId;
 
       const payload = {
         rideRequestId,
@@ -1041,11 +1072,8 @@ io.on('connection', (socket) => {
         console.error('ride_chat_message persist error (non-fatal):', persistErr?.message || persistErr);
       }
 
-      // Echo to sender + forward to recipient (if connected)
       socket.emit('ride_chat_message', payload);
-      if (recipientSocketId) {
-        io.to(recipientSocketId).emit('ride_chat_message', payload);
-      }
+      emitToUser(io, recipientId, 'ride_chat_message', payload);
     } catch (err) {
       console.error('Error handling ride_chat_message:', err);
       socket.emit('error', { message: 'Failed to send chat message' });
@@ -1062,17 +1090,14 @@ io.on('connection', (socket) => {
       }
       if (!rideRequestId || !callerId || !callerType) return;
       const RideRequest = require('./models/RideRequest');
-      const rideRequest = await RideRequest.findById(rideRequestId).select('rider acceptedBy');
+      const rideRequest = await RideRequest.findById(rideRequestId).select('rider acceptedBy').lean();
       if (!rideRequest) return;
 
       const riderId = (rideRequest.rider || '').toString();
       const driverId = (rideRequest.acceptedBy || '').toString();
       if (!riderId || !driverId) return;
 
-      const recipientSocketId =
-        callerType === 'rider'
-          ? driverConnections.get(driverId)
-          : activeConnections.get(riderId);
+      const recipientId = callerType === 'rider' ? driverId : riderId;
 
       const payload = {
         rideRequestId,
@@ -1081,9 +1106,7 @@ io.on('connection', (socket) => {
         timestamp: typeof timestamp === 'number' ? timestamp : Date.now(),
       };
 
-      if (recipientSocketId) {
-        io.to(recipientSocketId).emit('ride_call_request', payload);
-      }
+      emitToUser(io, recipientId, 'ride_call_request', payload);
       socket.emit('ride_call_request_ack', { rideRequestId, status: 'sent' });
       markEventProcessed(eventId);
       if (typeof ack === 'function') ack({ ok: true, eventId });
@@ -1103,27 +1126,22 @@ io.on('connection', (socket) => {
       }
       if (!rideRequestId || !responderId || !responderType || !action) return;
       const RideRequest = require('./models/RideRequest');
-      const rideRequest = await RideRequest.findById(rideRequestId).select('rider acceptedBy');
+      const rideRequest = await RideRequest.findById(rideRequestId).select('rider acceptedBy').lean();
       if (!rideRequest) return;
 
       const riderId = (rideRequest.rider || '').toString();
       const driverId = (rideRequest.acceptedBy || '').toString();
-      const recipientSocketId =
-        responderType === 'rider'
-          ? driverConnections.get(driverId)
-          : activeConnections.get(riderId);
+      const recipientId = responderType === 'rider' ? driverId : riderId;
 
       const payload = {
         rideRequestId,
         responderId: responderId.toString(),
         responderType,
-        action, // accept | decline
+        action,
         timestamp: typeof timestamp === 'number' ? timestamp : Date.now(),
       };
 
-      if (recipientSocketId) {
-        io.to(recipientSocketId).emit('ride_call_response', payload);
-      }
+      emitToUser(io, recipientId, 'ride_call_response', payload);
       socket.emit('ride_call_response_ack', { rideRequestId, status: 'sent' });
       markEventProcessed(eventId);
       if (typeof ack === 'function') ack({ ok: true, eventId });
@@ -1143,15 +1161,12 @@ io.on('connection', (socket) => {
       }
       if (!rideRequestId || !userId || !userType) return;
       const RideRequest = require('./models/RideRequest');
-      const rideRequest = await RideRequest.findById(rideRequestId).select('rider acceptedBy');
+      const rideRequest = await RideRequest.findById(rideRequestId).select('rider acceptedBy').lean();
       if (!rideRequest) return;
 
       const riderId = (rideRequest.rider || '').toString();
       const driverId = (rideRequest.acceptedBy || '').toString();
-      const recipientSocketId =
-        userType === 'rider'
-          ? driverConnections.get(driverId)
-          : activeConnections.get(riderId);
+      const recipientId = userType === 'rider' ? driverId : riderId;
 
       const payload = {
         rideRequestId,
@@ -1160,9 +1175,7 @@ io.on('connection', (socket) => {
         timestamp: typeof timestamp === 'number' ? timestamp : Date.now(),
       };
 
-      if (recipientSocketId) {
-        io.to(recipientSocketId).emit('ride_call_ended', payload);
-      }
+      emitToUser(io, recipientId, 'ride_call_ended', payload);
       socket.emit('ride_call_ended', payload);
       markEventProcessed(eventId);
       if (typeof ack === 'function') ack({ ok: true, eventId });
@@ -1179,17 +1192,12 @@ io.on('connection', (socket) => {
       const { rideRequestId, fromType, offer } = data || {};
       if (!rideRequestId || !fromType || !offer) return;
       const RideRequest = require('./models/RideRequest');
-      const rideRequest = await RideRequest.findById(rideRequestId).select('rider acceptedBy');
+      const rideRequest = await RideRequest.findById(rideRequestId).select('rider acceptedBy').lean();
       if (!rideRequest) return;
       const riderId = (rideRequest.rider || '').toString();
       const driverId = (rideRequest.acceptedBy || '').toString();
-      const recipientSocketId =
-        fromType === 'rider'
-          ? driverConnections.get(driverId)
-          : activeConnections.get(riderId);
-      if (recipientSocketId) {
-        io.to(recipientSocketId).emit('ride_call_offer', data);
-      }
+      const recipientId = fromType === 'rider' ? driverId : riderId;
+      emitToUser(io, recipientId, 'ride_call_offer', data);
     } catch (err) {
       console.error('Error handling ride_call_offer:', err);
     }
@@ -1201,17 +1209,12 @@ io.on('connection', (socket) => {
       const { rideRequestId, fromType, answer } = data || {};
       if (!rideRequestId || !fromType || !answer) return;
       const RideRequest = require('./models/RideRequest');
-      const rideRequest = await RideRequest.findById(rideRequestId).select('rider acceptedBy');
+      const rideRequest = await RideRequest.findById(rideRequestId).select('rider acceptedBy').lean();
       if (!rideRequest) return;
       const riderId = (rideRequest.rider || '').toString();
       const driverId = (rideRequest.acceptedBy || '').toString();
-      const recipientSocketId =
-        fromType === 'rider'
-          ? driverConnections.get(driverId)
-          : activeConnections.get(riderId);
-      if (recipientSocketId) {
-        io.to(recipientSocketId).emit('ride_call_answer', data);
-      }
+      const recipientId = fromType === 'rider' ? driverId : riderId;
+      emitToUser(io, recipientId, 'ride_call_answer', data);
     } catch (err) {
       console.error('Error handling ride_call_answer:', err);
     }
@@ -1223,17 +1226,12 @@ io.on('connection', (socket) => {
       const { rideRequestId, fromType, candidate } = data || {};
       if (!rideRequestId || !fromType || !candidate) return;
       const RideRequest = require('./models/RideRequest');
-      const rideRequest = await RideRequest.findById(rideRequestId).select('rider acceptedBy');
+      const rideRequest = await RideRequest.findById(rideRequestId).select('rider acceptedBy').lean();
       if (!rideRequest) return;
       const riderId = (rideRequest.rider || '').toString();
       const driverId = (rideRequest.acceptedBy || '').toString();
-      const recipientSocketId =
-        fromType === 'rider'
-          ? driverConnections.get(driverId)
-          : activeConnections.get(riderId);
-      if (recipientSocketId) {
-        io.to(recipientSocketId).emit('ride_call_ice_candidate', data);
-      }
+      const recipientId = fromType === 'rider' ? driverId : riderId;
+      emitToUser(io, recipientId, 'ride_call_ice_candidate', data);
     } catch (err) {
       console.error('Error handling ride_call_ice_candidate:', err);
     }

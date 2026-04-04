@@ -240,12 +240,21 @@ router.get('/transactions', authenticateJWT, async (req, res) => {
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit))
-      .select('transactionType amount status paymentMethod paymentDetails description createdAt updatedAt processedAt');
+      .select('transactionType amount status paymentMethod paymentDetails description createdAt updatedAt processedAt')
+      .lean();
+
+    const sanitized = transactions.map((t) => {
+      const row = { ...t };
+      if (row.paymentDetails && row.paymentDetails.proofImage) {
+        row.paymentDetails = { ...row.paymentDetails, proofImage: undefined, hasProofImage: true };
+      }
+      return row;
+    });
 
     const total = await DriverWalletTransaction.countDocuments(query);
 
     res.json({
-      transactions,
+      transactions: sanitized,
       pagination: {
         current: parseInt(page),
         pages: Math.ceil(total / limit),

@@ -44,7 +44,14 @@ router.get('/wallet/top-up-requests', authenticateAdminJWT, async (req, res) => 
       .limit(300)
       .lean();
 
-    return res.json({ transactions });
+    const sanitized = transactions.map((t) => {
+      if (t.paymentDetails && t.paymentDetails.proofImage) {
+        return { ...t, paymentDetails: { ...t.paymentDetails, proofImage: undefined, hasProofImage: true } };
+      }
+      return t;
+    });
+
+    return res.json({ transactions: sanitized });
   } catch (err) {
     console.error('List top-up requests error:', err);
     return res.status(500).json({ error: 'Failed to list top-up requests' });

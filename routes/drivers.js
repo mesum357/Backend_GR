@@ -80,17 +80,21 @@ router.post('/register', authenticateJWT, async (req, res) => {
 router.get('/profile', authenticateJWT, async (req, res) => {
   try {
     const driver = await Driver.findOne({ user: req.user._id })
+      .select('-licenseImage -cnicFrontImage -cnicBackImage')
       .populate('user', 'firstName lastName email phone');
 
     if (!driver) {
       return res.status(404).json({ error: 'Driver profile not found' });
     }
 
+    const safeVehicleInfo = driver.vehicleInfo ? { ...driver.vehicleInfo.toObject?.() || driver.vehicleInfo } : {};
+    delete safeVehicleInfo.vehicleImage;
+
     res.json({
       driver: {
         id: driver._id,
         user: driver.user,
-        vehicleInfo: driver.vehicleInfo,
+        vehicleInfo: safeVehicleInfo,
         isOnline: driver.isOnline,
         isAvailable: driver.isAvailable,
         rating: driver.rating,
@@ -101,6 +105,7 @@ router.get('/profile', authenticateJWT, async (req, res) => {
         currentLocation: driver.currentLocation,
         preferredAreas: driver.preferredAreas,
         workingHours: driver.workingHours,
+        wallet: { balance: driver.wallet?.balance || 0, currency: driver.wallet?.currency || 'PKR' },
         lastActive: driver.lastActive
       }
     });

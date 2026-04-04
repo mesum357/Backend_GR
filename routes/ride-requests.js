@@ -211,15 +211,19 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
     );
     console.log(`🚫 Cancelled previous searching/pending requests for rider ${req.user._id}`);
 
-    // Calculate distance and duration
-    const distance = calculateHaversineDistance(
+    // Haversine gives straight-line distance; roads are typically 1.3-1.5x longer in hilly/urban areas.
+    // Gilgit's winding mountain roads justify a 1.4x multiplier.
+    const straightLineDistance = calculateHaversineDistance(
       pickup.latitude,
       pickup.longitude,
       destination.latitude,
       destination.longitude
     );
+    const ROAD_DISTANCE_MULTIPLIER = 1.4;
+    const distance = Math.round(straightLineDistance * ROAD_DISTANCE_MULTIPLIER * 100) / 100;
 
-    const estimatedDuration = Math.round(distance * 2); // 2 minutes per km
+    const AVG_CITY_SPEED_KPH = 25;
+    const estimatedDuration = Math.max(2, Math.round((distance / AVG_CITY_SPEED_KPH) * 60));
 
     // Create ride request
     const rideRequest = new RideRequest({
@@ -820,7 +824,10 @@ router.post('/:requestId/respond', authenticateJWT, async (req, res) => {
         const offerFare = (counterOffer && Number(counterOffer) > 0)
           ? Number(counterOffer)
           : (rideRequest.requestedPrice || rideRequest.suggestedPrice || 0);
-        const arrivalTime = Math.floor(Math.random() * 10) + 5;
+        const driverEntry = rideRequest.availableDrivers[driverIndex];
+        const distKm = driverEntry?.distance || 1;
+        const AVG_CITY_SPEED_KPH = 25;
+        const arrivalTime = Math.max(2, Math.round((distKm / AVG_CITY_SPEED_KPH) * 60));
         const enriched = await buildDriverFareOfferEnrichment(req.user._id);
 
         rideRequest.fareOffers = Array.isArray(rideRequest.fareOffers) ? rideRequest.fareOffers : [];
