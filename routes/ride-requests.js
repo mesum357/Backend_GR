@@ -9,6 +9,7 @@ const { getSystemSettings } = require('../lib/systemSettings');
 const { getServiceUnavailableZoneAt } = require('../lib/serviceZones');
 const { registerRiderCancellationForPenalty } = require('../lib/registerNoArrivalCancellation');
 const { getDriverMinimumWalletPkr } = require('../lib/walletSettings');
+const { deductDriverCommissionForRide } = require('../lib/driverCommission');
 
 /** Same delivery semantics as server.js emitToUser (user room + legacy socket id). */
 function emitToUserFromApp(req, userId, event, payload) {
@@ -1002,6 +1003,29 @@ router.post('/:requestId/cancel', authenticateJWT, async (req, res) => {
     console.log(
       `🚫 Ride request ${requestId} cancelled by ${uid} (${req.user.userType}) — ${oldStatus} → cancelled`
     );
+
+    // Driver-initiated cancel: same commission % as a completed trip (idempotent per rideRequest + driver).
+    if (req.user.userType === 'driver' && isAcceptedDriver) {
+      try {
+        const fare =
+          Number(rideRequest.requestedPrice || 0) ||
+          Number(rideRequest.suggestedPrice || 0) ||
+          0;
+        const result = await deductDriverCommissionForRide({
+          rideId: rideRequest._id,
+          driverUserId: uid,
+          vehicleType: rideRequest.vehicleType || 'ride_mini',
+          fareAmount: fare,
+        });
+        if (result?.deducted) {
+          console.log(
+            `💳 Driver cancel commission: ${result.amount} PKR (${result.pct}%) for request ${requestId}`
+          );
+        }
+      } catch (commErr) {
+        console.error('Driver cancel: commission deduction failed', commErr?.message || commErr);
+      }
+    }
 
     // Rider cancellation reason -> driver penalty / warning logic.
     if (req.user.userType === 'rider' && rideRequest.acceptedBy) {
