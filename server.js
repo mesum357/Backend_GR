@@ -74,14 +74,16 @@ if (process.env.NODE_ENV !== 'react-native') {
   app.use(passport.session());
 }
 
-// Database connection
+// Database (connect in startServer — must succeed before listen; otherwise admin login works but DB routes 500)
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/tourist_app';
-mongoose.connect(MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
-.then(() => console.log('Connected to MongoDB'))
-.catch(err => console.error('MongoDB connection error:', err));
+
+async function connectMongo() {
+  await mongoose.connect(MONGODB_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  });
+  console.log('Connected to MongoDB');
+}
 
 // Import routes
 const authRoutes = require('./routes/auth');
@@ -149,12 +151,14 @@ app.use('/api', serviceZonesRoutes);
 app.use('/api', appUpdatesRoutes);
 app.use('/api', notificationCenterRoutes);
 
-// Health check endpoint
+// Health check endpoint (mongo readyState: 0=disconnected 1=connected 2=connecting 3=disconnecting)
 app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
-    message: 'Server is running',
-    firebase: firebase.admin ? 'Initialized' : 'Not configured'
+  const mongoOk = mongoose.connection.readyState === 1;
+  res.status(mongoOk ? 200 : 503).json({
+    status: mongoOk ? 'OK' : 'degraded',
+    message: mongoOk ? 'Server is running' : 'MongoDB not connected',
+    mongo: { ready: mongoOk, readyState: mongoose.connection.readyState },
+    firebase: firebase.admin ? 'Initialized' : 'Not configured',
   });
 });
 
@@ -1423,6 +1427,13 @@ function getNetworkIP() {
 const networkIP = getNetworkIP();
 
 async function startServer() {
+  try {
+    await connectMongo();
+  } catch (err) {
+    console.error('MongoDB connection error:', err?.message || err);
+    process.exit(1);
+  }
+
   const redisUrl = process.env.REDIS_URL || process.env.REDISCLOUD_URL;
   if (redisUrl) {
     try {
