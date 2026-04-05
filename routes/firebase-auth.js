@@ -2,16 +2,53 @@ const express = require('express');
 const router = express.Router();
 const { helpers } = require('../config/firebase');
 const User = require('../models/User');
+const RiderWhatsappOtp = require('../models/RiderWhatsappOtp');
+const {
+  normalizeRiderPhone,
+  verifyRiderWhatsappOtpHash,
+} = require('../lib/riderPhoneVerification');
 const { generateToken } = require('../middleware/auth');
 
 // Firebase-based user registration
 router.post('/register', async (req, res) => {
   try {
-    const { email, password, firstName, lastName, phone, userType, firebaseUid } = req.body;
+    const { email, password, firstName, lastName, phone, userType, firebaseUid, whatsappOtp } = req.body;
+    const resolvedType = userType || 'rider';
+    const rawPhone = String(phone || '').trim();
+    const normalizedPhone = normalizeRiderPhone(phone);
+    const riderOtpRequired = process.env.RIDER_WHATSAPP_OTP_REQUIRED !== '0';
+
+    if (resolvedType === 'rider' && riderOtpRequired) {
+      const otp = String(whatsappOtp || '').trim();
+      if (!/^\d{6}$/.test(otp)) {
+        return res.status(400).json({
+          error: 'Enter the 6-digit WhatsApp code (use /api/auth/rider/whatsapp/send-code first)',
+        });
+      }
+      const doc = await RiderWhatsappOtp.findOne({ phone: normalizedPhone });
+      if (!doc || doc.expiresAt.getTime() < Date.now()) {
+        return res.status(400).json({
+          error: 'Code expired or not found. Send a new WhatsApp code and try again.',
+        });
+      }
+      if (doc.attempts >= 8) {
+        await RiderWhatsappOtp.deleteOne({ _id: doc._id });
+        return res.status(400).json({ error: 'Too many failed attempts. Request a new WhatsApp code.' });
+      }
+      if (!verifyRiderWhatsappOtpHash(normalizedPhone, otp, doc.codeHash)) {
+        await RiderWhatsappOtp.updateOne({ _id: doc._id }, { $inc: { attempts: 1 } });
+        return res.status(400).json({ error: 'Invalid WhatsApp verification code' });
+      }
+      await RiderWhatsappOtp.deleteOne({ _id: doc._id });
+    }
 
     // Check if user already exists
-    const existingUser = await User.findOne({ 
-      $or: [{ email: email.toLowerCase() }, { phone }] 
+    const existingUser = await User.findOne({
+      $or: [
+        { email: email.toLowerCase() },
+        { phone: normalizedPhone },
+        { phone: rawPhone },
+      ],
     });
 
     if (existingUser) {
@@ -26,9 +63,10 @@ router.post('/register', async (req, res) => {
       password,
       firstName,
       lastName,
-      phone,
-      userType: userType || 'rider',
-      firebaseUid: firebaseUid || null
+      phone: resolvedType === 'rider' ? normalizedPhone : rawPhone,
+      userType: resolvedType,
+      firebaseUid: firebaseUid || null,
+      isVerified: resolvedType === 'rider',
     });
 
     await user.save();
