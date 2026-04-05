@@ -83,6 +83,8 @@ const rideRequestSchema = new mongoose.Schema({
     driverRating: { type: Number, default: 4.5 },
     fareAmount: { type: Number, required: true },
     arrivalTime: { type: Number, required: true }, // in minutes
+    /** Straight-line/approx km from driver to pickup when offer was made */
+    driverDistanceKm: { type: Number, default: null },
     vehicleInfo: { type: String, default: 'Standard Vehicle' },
     vehicleName: { type: String, default: '' },
     driverPhoto: { type: String, default: '' },

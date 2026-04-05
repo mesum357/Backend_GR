@@ -826,9 +826,13 @@ router.post('/:requestId/respond', authenticateJWT, async (req, res) => {
           ? Number(counterOffer)
           : (rideRequest.requestedPrice || rideRequest.suggestedPrice || 0);
         const driverEntry = rideRequest.availableDrivers[driverIndex];
-        const distKm = driverEntry?.distance || 1;
+        const rawDriverDistKm = driverEntry?.distance;
+        const distKmForEta =
+          typeof rawDriverDistKm === 'number' && Number.isFinite(rawDriverDistKm) ? rawDriverDistKm : 1;
+        const driverDistanceKmForOffer =
+          typeof rawDriverDistKm === 'number' && Number.isFinite(rawDriverDistKm) ? rawDriverDistKm : null;
         const AVG_CITY_SPEED_KPH = 25;
-        const arrivalTime = Math.max(2, Math.round((distKm / AVG_CITY_SPEED_KPH) * 60));
+        const arrivalTime = Math.max(2, Math.round((distKmForEta / AVG_CITY_SPEED_KPH) * 60));
         const enriched = await buildDriverFareOfferEnrichment(req.user._id);
 
         rideRequest.fareOffers = Array.isArray(rideRequest.fareOffers) ? rideRequest.fareOffers : [];
@@ -838,6 +842,7 @@ router.post('/:requestId/respond', authenticateJWT, async (req, res) => {
           driverRating: enriched.driverRating,
           fareAmount: offerFare,
           arrivalTime,
+          driverDistanceKm: driverDistanceKmForOffer,
           vehicleInfo: enriched.vehicleInfo,
           vehicleName: enriched.vehicleName,
           driverPhoto: enriched.driverPhoto,
@@ -854,6 +859,7 @@ router.post('/:requestId/respond', authenticateJWT, async (req, res) => {
           driverRating: enriched.driverRating,
           fareAmount: offerFare,
           arrivalTime,
+          driverDistanceKm: driverDistanceKmForOffer,
           vehicleInfo: enriched.vehicleInfo,
           vehicleName: enriched.vehicleName,
           driverPhoto: enriched.driverPhoto,

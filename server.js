@@ -486,6 +486,18 @@ io.on('connection', (socket) => {
             rideRequest.suggestedPrice ||
             0;
 
+          const distForOffer = (() => {
+            try {
+              const driverEntry = (rideRequest.availableDrivers || []).find(
+                (d) => d.driver && d.driver.toString() === String(driverId)
+              );
+              const dk = driverEntry?.distance;
+              return typeof dk === 'number' && Number.isFinite(dk) ? dk : null;
+            } catch {
+              return null;
+            }
+          })();
+
           // Notify rider with fare offer (user room — not raw socket id)
           emitToUser(io, rideRequest.rider, 'fare_offer', {
             rideRequestId,
@@ -494,6 +506,7 @@ io.on('connection', (socket) => {
             driverRating: enriched.driverRating,
             fareAmount,
             arrivalTime,
+            driverDistanceKm: distForOffer,
             vehicleInfo: enriched.vehicleInfo,
             vehicleName: enriched.vehicleName,
             driverPhoto: enriched.driverPhoto,
@@ -572,11 +585,18 @@ io.on('connection', (socket) => {
       }
 
       const enriched = await buildDriverFareOfferEnrichment(driverId);
+      const driverEntryForDist = (rideRequest.availableDrivers || []).find(
+        (d) => d.driver && d.driver.toString() === String(driverId)
+      );
+      const dk = driverEntryForDist?.distance;
+      const driverDistanceKm = typeof dk === 'number' && Number.isFinite(dk) ? dk : null;
+
       const offerPayload = {
         driverName: enriched.driverName || driverName || 'Driver',
         driverRating: enriched.driverRating ?? driverRating ?? 0,
         fareAmount,
         arrivalTime,
+        driverDistanceKm,
         vehicleInfo: enriched.vehicleInfo || vehicleInfo || 'Vehicle',
         vehicleName: enriched.vehicleName || '',
         driverPhoto: enriched.driverPhoto || '',
