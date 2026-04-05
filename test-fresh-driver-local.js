@@ -35,7 +35,7 @@ async function testFreshDriverLocal() {
         lastName: 'Driver',
         email: driverEmail,
         phone: `92${timestamp.toString().slice(-10)}`,
-        password: 'password123',
+        password: 'GbridesE2e1!',
         userType: 'driver'
       })
     });
@@ -81,7 +81,7 @@ async function testFreshDriverLocal() {
         lastName: 'Rider',
         email: riderEmail,
         phone: `93${timestamp.toString().slice(-10)}`,
-        password: 'password123',
+        password: 'GbridesE2e1!',
         userType: 'rider'
       })
     });

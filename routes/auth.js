@@ -13,6 +13,7 @@ const {
   isValidEmail,
 } = require('../lib/emailOtpCrypto');
 const { sendEmailVerificationCode } = require('../lib/sendTransactionalEmail');
+const { validateSignupPassword } = require('../lib/signupPasswordPolicy');
 const { authenticateLocal, authenticateJWT, generateToken } = require('../middleware/auth');
 const router = express.Router();
 
@@ -140,6 +141,10 @@ router.post('/register', async (req, res) => {
     const rawPhone = String(phone || '').trim();
     const normalizedPhone = normalizeRiderPhone(phone);
     const emailNorm = normalizeSignupEmail(email);
+    const pwPolicyErr = validateSignupPassword(password, emailNorm);
+    if (pwPolicyErr) {
+      return res.status(400).json({ error: pwPolicyErr });
+    }
     /** Unset or any value except "0" requires email OTP. Set EMAIL_VERIFICATION_REQUIRED=0 for automated tests. */
     const emailOtpRequired = process.env.EMAIL_VERIFICATION_REQUIRED !== '0';
     const otpInput = emailVerificationCode ?? req.body.emailOtp ?? req.body.whatsappOtp;
@@ -430,6 +435,11 @@ router.put('/change-password', authenticateJWT, async (req, res) => {
       return res.status(400).json({ error: 'Current password is incorrect' });
     }
 
+    const pwErr = validateSignupPassword(newPassword, String(req.user.email || '').toLowerCase());
+    if (pwErr) {
+      return res.status(400).json({ error: pwErr });
+    }
+
     // Update password
     req.user.password = newPassword;
     await req.user.save();
@@ -492,6 +502,10 @@ router.post('/reset-password', async (req, res) => {
         if (!user) {
           return res.status(400).json({ error: 'Invalid or expired token' });
         }
+        const jwtPwErr = validateSignupPassword(newPassword, String(user.email || '').toLowerCase());
+        if (jwtPwErr) {
+          return res.status(400).json({ error: jwtPwErr });
+        }
         user.password = newPassword;
         await user.save();
         return res.json({ message: 'Password reset successfully' });
@@ -507,11 +521,12 @@ router.post('/reset-password', async (req, res) => {
         error: 'Email, user type (rider or driver), verification code, and new password are required',
       });
     }
-    if (String(newPassword).length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    const emailNorm = normalizeSignupEmail(email);
+    const pwErr = validateSignupPassword(newPassword, emailNorm);
+    if (pwErr) {
+      return res.status(400).json({ error: pwErr });
     }
 
-    const emailNorm = normalizeSignupEmail(email);
     const doc = await EmailVerificationOtp.findOne({
       email: emailNorm,
       purpose: EMAIL_OTP_PURPOSE.password_reset,

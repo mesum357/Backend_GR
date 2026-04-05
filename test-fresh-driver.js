@@ -22,7 +22,7 @@ async function testFreshDriver() {
         lastName: 'Driver',
         email: driverEmail,
         phone: `1234567${timestamp.toString().slice(-3)}`,
-        password: 'password123',
+        password: 'GbridesE2e1!',
         userType: 'driver'
       })
     });

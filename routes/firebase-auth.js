@@ -10,6 +10,7 @@ const {
   verifyEmailOtpHash,
 } = require('../lib/emailOtpCrypto');
 const { generateToken } = require('../middleware/auth');
+const { validateSignupPassword } = require('../lib/signupPasswordPolicy');
 
 // Firebase-based user registration
 router.post('/register', async (req, res) => {
@@ -28,6 +29,10 @@ router.post('/register', async (req, res) => {
     const rawPhone = String(phone || '').trim();
     const normalizedPhone = normalizeRiderPhone(phone);
     const emailNorm = normalizeSignupEmail(email);
+    const pwPolicyErr = validateSignupPassword(password, emailNorm);
+    if (pwPolicyErr) {
+      return res.status(400).json({ error: pwPolicyErr });
+    }
     const emailOtpRequired = process.env.EMAIL_VERIFICATION_REQUIRED !== '0';
     const otpInput = emailVerificationCode ?? req.body.emailOtp ?? req.body.whatsappOtp;
 
