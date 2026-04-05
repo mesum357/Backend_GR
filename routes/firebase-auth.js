@@ -2,10 +2,11 @@ const express = require('express');
 const router = express.Router();
 const { helpers } = require('../config/firebase');
 const User = require('../models/User');
-const RiderWhatsappOtp = require('../models/RiderWhatsappOtp');
+const WhatsappOtp = require('../models/WhatsappOtp');
 const {
   normalizeRiderPhone,
-  verifyRiderWhatsappOtpHash,
+  verifyWhatsappOtpHash,
+  WHATSAPP_OTP_PURPOSE,
 } = require('../lib/riderPhoneVerification');
 const { generateToken } = require('../middleware/auth');
 
@@ -17,29 +18,36 @@ router.post('/register', async (req, res) => {
     const rawPhone = String(phone || '').trim();
     const normalizedPhone = normalizeRiderPhone(phone);
     const riderOtpRequired = process.env.RIDER_WHATSAPP_OTP_REQUIRED !== '0';
+    const driverOtpRequired = process.env.DRIVER_WHATSAPP_OTP_REQUIRED !== '0';
 
-    if (resolvedType === 'rider' && riderOtpRequired) {
-      const otp = String(whatsappOtp || '').trim();
+    async function consumeOtp(purpose, otpRaw) {
+      const otp = String(otpRaw || '').trim();
       if (!/^\d{6}$/.test(otp)) {
-        return res.status(400).json({
-          error: 'Enter the 6-digit WhatsApp code (use /api/auth/rider/whatsapp/send-code first)',
-        });
+        return { error: 'Enter the 6-digit WhatsApp code' };
       }
-      const doc = await RiderWhatsappOtp.findOne({ phone: normalizedPhone });
+      const doc = await WhatsappOtp.findOne({ phone: normalizedPhone, purpose });
       if (!doc || doc.expiresAt.getTime() < Date.now()) {
-        return res.status(400).json({
-          error: 'Code expired or not found. Send a new WhatsApp code and try again.',
-        });
+        return { error: 'Code expired or not found. Send a new WhatsApp code.' };
       }
       if (doc.attempts >= 8) {
-        await RiderWhatsappOtp.deleteOne({ _id: doc._id });
-        return res.status(400).json({ error: 'Too many failed attempts. Request a new WhatsApp code.' });
+        await WhatsappOtp.deleteOne({ _id: doc._id });
+        return { error: 'Too many failed attempts. Request a new WhatsApp code.' };
       }
-      if (!verifyRiderWhatsappOtpHash(normalizedPhone, otp, doc.codeHash)) {
-        await RiderWhatsappOtp.updateOne({ _id: doc._id }, { $inc: { attempts: 1 } });
-        return res.status(400).json({ error: 'Invalid WhatsApp verification code' });
+      if (!verifyWhatsappOtpHash(normalizedPhone, purpose, otp, doc.codeHash)) {
+        await WhatsappOtp.updateOne({ _id: doc._id }, { $inc: { attempts: 1 } });
+        return { error: 'Invalid WhatsApp verification code' };
       }
-      await RiderWhatsappOtp.deleteOne({ _id: doc._id });
+      await WhatsappOtp.deleteOne({ _id: doc._id });
+      return null;
+    }
+
+    if (resolvedType === 'rider' && riderOtpRequired) {
+      const bad = await consumeOtp(WHATSAPP_OTP_PURPOSE.rider_register, whatsappOtp);
+      if (bad) return res.status(400).json({ error: bad.error });
+    }
+    if (resolvedType === 'driver' && driverOtpRequired) {
+      const bad = await consumeOtp(WHATSAPP_OTP_PURPOSE.driver_register, whatsappOtp);
+      if (bad) return res.status(400).json({ error: bad.error });
     }
 
     // Check if user already exists
@@ -63,10 +71,10 @@ router.post('/register', async (req, res) => {
       password,
       firstName,
       lastName,
-      phone: resolvedType === 'rider' ? normalizedPhone : rawPhone,
+      phone: normalizedPhone,
       userType: resolvedType,
       firebaseUid: firebaseUid || null,
-      isVerified: resolvedType === 'rider',
+      isVerified: resolvedType === 'rider' || resolvedType === 'driver',
     });
 
     await user.save();

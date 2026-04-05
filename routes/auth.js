@@ -3,16 +3,40 @@ const crypto = require('crypto');
 const passport = require('passport');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
-const RiderWhatsappOtp = require('../models/RiderWhatsappOtp');
+const WhatsappOtp = require('../models/WhatsappOtp');
 const {
   normalizeRiderPhone,
-  hashRiderWhatsappOtp,
-  verifyRiderWhatsappOtpHash,
+  hashWhatsappOtp,
+  verifyWhatsappOtpHash,
+  WHATSAPP_OTP_PURPOSE,
   isValidInternationalPhone,
 } = require('../lib/riderPhoneVerification');
 const { sendWhatsappOtpMessage } = require('../lib/sendWhatsappOtpMessage');
 const { authenticateLocal, authenticateJWT, generateToken } = require('../middleware/auth');
 const router = express.Router();
+
+async function upsertWhatsappOtpAndSend(phoneNorm, purpose, sendIntent) {
+  const prev = await WhatsappOtp.findOne({ phone: phoneNorm, purpose });
+  if (prev && Date.now() - new Date(prev.updatedAt).getTime() < 55_000) {
+    return { ok: false, kind: 'RATE', message: 'Please wait about a minute before requesting another code' };
+  }
+  const code = String(crypto.randomInt(100000, 1000000));
+  const codeHash = hashWhatsappOtp(phoneNorm, purpose, code);
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+  await WhatsappOtp.findOneAndUpdate(
+    { phone: phoneNorm, purpose },
+    { $set: { codeHash, expiresAt, attempts: 0 } },
+    { upsert: true, new: true }
+  );
+  const sendResult = await sendWhatsappOtpMessage(phoneNorm, code, {
+    intent: sendIntent === 'password_reset' ? 'password_reset' : 'signup',
+  });
+  if (!sendResult.ok && !sendResult.dev) {
+    await WhatsappOtp.deleteOne({ phone: phoneNorm, purpose });
+    return { ok: false, kind: 'SEND', message: 'Could not send WhatsApp. Try again later or contact support.' };
+  }
+  return { ok: true };
+}
 
 /** Rider signup: send 6-digit code to WhatsApp (Meta / Twilio / dev log). */
 router.post('/rider/whatsapp/send-code', async (req, res) => {
@@ -45,24 +69,12 @@ router.post('/rider/whatsapp/send-code', async (req, res) => {
       return res.status(400).json({ error: 'This phone number is already registered' });
     }
 
-    const prev = await RiderWhatsappOtp.findOne({ phone: norm });
-    if (prev && Date.now() - new Date(prev.updatedAt).getTime() < 55_000) {
-      return res.status(429).json({ error: 'Please wait about a minute before requesting another code' });
+    const sent = await upsertWhatsappOtpAndSend(norm, WHATSAPP_OTP_PURPOSE.rider_register, 'signup');
+    if (!sent.ok && sent.kind === 'RATE') {
+      return res.status(429).json({ error: sent.message });
     }
-
-    const code = String(crypto.randomInt(100000, 1000000));
-    const codeHash = hashRiderWhatsappOtp(norm, code);
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-    await RiderWhatsappOtp.findOneAndUpdate(
-      { phone: norm },
-      { $set: { codeHash, expiresAt, attempts: 0 } },
-      { upsert: true, new: true }
-    );
-
-    const sendResult = await sendWhatsappOtpMessage(norm, code);
-    if (!sendResult.ok && !sendResult.dev) {
-      await RiderWhatsappOtp.deleteOne({ phone: norm });
-      return res.status(502).json({ error: 'Could not send WhatsApp. Try again later or contact support.' });
+    if (!sent.ok) {
+      return res.status(502).json({ error: sent.message });
     }
 
     return res.json({
@@ -70,6 +82,42 @@ router.post('/rider/whatsapp/send-code', async (req, res) => {
     });
   } catch (err) {
     console.error('rider whatsapp send-code error:', err);
+    return res.status(500).json({ error: 'Failed to send verification code' });
+  }
+});
+
+/** Driver signup: send 6-digit code; after verify, registration creates pending admin approval request. */
+router.post('/driver/whatsapp/send-code', async (req, res) => {
+  try {
+    const { phone } = req.body;
+    if (!phone || typeof phone !== 'string') {
+      return res.status(400).json({ error: 'Phone number is required' });
+    }
+    const norm = normalizeRiderPhone(phone);
+    if (!isValidInternationalPhone(norm)) {
+      return res.status(400).json({
+        error: 'Use a valid number with country code (e.g. +923001234567 for Pakistan)',
+      });
+    }
+    const rawTrim = String(phone).trim().replace(/\s/g, '');
+    const existing = await User.findOne({
+      $or: [{ phone: norm }, { phone: rawTrim }],
+    });
+    if (existing) {
+      return res.status(400).json({ error: 'An account with this phone number already exists' });
+    }
+
+    const sent = await upsertWhatsappOtpAndSend(norm, WHATSAPP_OTP_PURPOSE.driver_register, 'signup');
+    if (!sent.ok && sent.kind === 'RATE') {
+      return res.status(429).json({ error: sent.message });
+    }
+    if (!sent.ok) {
+      return res.status(502).json({ error: sent.message });
+    }
+
+    return res.json({ message: 'Verification code sent to your WhatsApp' });
+  } catch (err) {
+    console.error('driver whatsapp send-code error:', err);
     return res.status(500).json({ error: 'Failed to send verification code' });
   }
 });
@@ -92,33 +140,47 @@ router.post('/register', async (req, res) => {
     const resolvedType = userType || 'rider';
     const rawPhone = String(phone || '').trim();
     const normalizedPhone = normalizeRiderPhone(phone);
-    /** Production: unset or any value except "0" requires WhatsApp OTP for riders. Set to 0 for automated tests. */
+    /** Production: unset requires WhatsApp OTP. Set to 0 for automated tests. */
     const riderOtpRequired = process.env.RIDER_WHATSAPP_OTP_REQUIRED !== '0';
+    const driverOtpRequired = process.env.DRIVER_WHATSAPP_OTP_REQUIRED !== '0';
 
-    if (resolvedType === 'rider' && riderOtpRequired) {
-      const otp = String(whatsappOtp || '').trim();
+    async function consumeWhatsappOtpOr400(phoneNorm, purpose, otpRaw) {
+      const otp = String(otpRaw || '').trim();
       if (!/^\d{6}$/.test(otp)) {
-        return res.status(400).json({
-          error: 'Enter the 6-digit code sent to your WhatsApp (use “Send WhatsApp code” first)',
-        });
+        return { error: 'Enter the 6-digit code sent to your WhatsApp (use “Send WhatsApp code” first)' };
       }
-      const doc = await RiderWhatsappOtp.findOne({ phone: normalizedPhone });
+      const doc = await WhatsappOtp.findOne({ phone: phoneNorm, purpose });
       if (!doc || doc.expiresAt.getTime() < Date.now()) {
-        return res.status(400).json({
-          error: 'Code expired or not found. Send a new WhatsApp code and try again.',
-        });
+        return { error: 'Code expired or not found. Send a new WhatsApp code and try again.' };
       }
       if (doc.attempts >= 8) {
-        await RiderWhatsappOtp.deleteOne({ _id: doc._id });
-        return res.status(400).json({
-          error: 'Too many failed attempts. Request a new WhatsApp code.',
-        });
+        await WhatsappOtp.deleteOne({ _id: doc._id });
+        return { error: 'Too many failed attempts. Request a new WhatsApp code.' };
       }
-      if (!verifyRiderWhatsappOtpHash(normalizedPhone, otp, doc.codeHash)) {
-        await RiderWhatsappOtp.updateOne({ _id: doc._id }, { $inc: { attempts: 1 } });
-        return res.status(400).json({ error: 'Invalid WhatsApp verification code' });
+      if (!verifyWhatsappOtpHash(phoneNorm, purpose, otp, doc.codeHash)) {
+        await WhatsappOtp.updateOne({ _id: doc._id }, { $inc: { attempts: 1 } });
+        return { error: 'Invalid WhatsApp verification code' };
       }
-      await RiderWhatsappOtp.deleteOne({ _id: doc._id });
+      await WhatsappOtp.deleteOne({ _id: doc._id });
+      return null;
+    }
+
+    if (resolvedType === 'rider' && riderOtpRequired) {
+      const bad = await consumeWhatsappOtpOr400(
+        normalizedPhone,
+        WHATSAPP_OTP_PURPOSE.rider_register,
+        whatsappOtp
+      );
+      if (bad) return res.status(400).json({ error: bad.error });
+    }
+
+    if (resolvedType === 'driver' && driverOtpRequired) {
+      const bad = await consumeWhatsappOtpOr400(
+        normalizedPhone,
+        WHATSAPP_OTP_PURPOSE.driver_register,
+        whatsappOtp
+      );
+      if (bad) return res.status(400).json({ error: bad.error });
     }
 
     // Check if user already exists
@@ -136,16 +198,16 @@ router.post('/register', async (req, res) => {
       });
     }
 
-    // Create new user
+    // Create new user (phone normalized after WhatsApp verification when required)
     const user = new User({
       email: email.toLowerCase(),
       password,
       firstName,
       lastName,
-      phone: resolvedType === 'rider' ? normalizedPhone : rawPhone,
+      phone: normalizedPhone,
       userType: resolvedType,
       profileImage: profileImage || null,
-      isVerified: resolvedType === 'rider',
+      isVerified: resolvedType === 'rider' || resolvedType === 'driver',
     });
 
     await user.save();
@@ -386,54 +448,113 @@ router.put('/change-password', authenticateJWT, async (req, res) => {
   }
 });
 
-// Forgot password (send reset email)
+// Forgot password — send 6-digit code to WhatsApp (body: { phone, userType: "rider"|"driver" })
 router.post('/forgot-password', async (req, res) => {
   try {
-    const { email } = req.body;
-
-    const user = await User.findOne({ email: email.toLowerCase() });
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+    const { phone, userType } = req.body;
+    const ut = String(userType || '').toLowerCase();
+    if (!phone || !['rider', 'driver'].includes(ut)) {
+      return res.status(400).json({ error: 'Phone and user type (rider or driver) are required' });
     }
-
-    // Generate reset token (you can implement email sending here)
-    const resetToken = generateToken(user);
-    
-    // For now, just return the token (in production, send via email)
-    res.json({ 
-      message: 'Password reset instructions sent to your email',
-      resetToken // Remove this in production
+    const norm = normalizeRiderPhone(phone);
+    if (!isValidInternationalPhone(norm)) {
+      return res.status(400).json({
+        error: 'Use a valid number with country code (e.g. +923001234567)',
+      });
+    }
+    const rawTrim = String(phone).trim().replace(/\s/g, '');
+    const user = await User.findOne({
+      userType: ut,
+      $or: [{ phone: norm }, { phone: rawTrim }],
     });
 
+    const genericMessage = {
+      message: 'If an account exists for this number, we sent a WhatsApp code.',
+    };
+
+    if (!user) {
+      return res.json(genericMessage);
+    }
+
+    const sent = await upsertWhatsappOtpAndSend(norm, WHATSAPP_OTP_PURPOSE.password_reset, 'password_reset');
+    if (!sent.ok && sent.kind === 'RATE') {
+      return res.status(429).json({ error: sent.message });
+    }
+    if (!sent.ok) {
+      return res.status(502).json({ error: sent.message });
+    }
+
+    return res.json(genericMessage);
   } catch (error) {
-    console.error('Forgot password error:', error);
-    res.status(500).json({ error: 'Password reset failed' });
+    console.error('Forgot password (WhatsApp) error:', error);
+    res.status(500).json({ error: 'Password reset request failed' });
   }
 });
 
-// Reset password
+// Reset password — WhatsApp code (body: { phone, userType, code, newPassword }) or legacy JWT { token, newPassword }
 router.post('/reset-password', async (req, res) => {
   try {
-    const { token, newPassword } = req.body;
+    const { phone, userType, code, newPassword, token } = req.body;
 
-    if (!token || !newPassword) {
-      return res.status(400).json({ error: 'Token and new password are required' });
+    if (token && newPassword && !phone) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-jwt-secret');
+        const user = await User.findById(decoded.id);
+        if (!user) {
+          return res.status(400).json({ error: 'Invalid or expired token' });
+        }
+        user.password = newPassword;
+        await user.save();
+        return res.json({ message: 'Password reset successfully' });
+      } catch (e) {
+        console.error('Reset password (JWT) error:', e);
+        return res.status(400).json({ error: 'Invalid or expired token' });
+      }
     }
 
-    // Verify token and get user
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-jwt-secret');
-    const user = await User.findById(decoded.id);
+    const ut = String(userType || '').toLowerCase();
+    if (!phone || !['rider', 'driver'].includes(ut) || !code || !newPassword) {
+      return res.status(400).json({
+        error: 'Phone, user type (rider or driver), WhatsApp code, and new password are required',
+      });
+    }
+    if (String(newPassword).length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
 
+    const norm = normalizeRiderPhone(phone);
+    const rawTrim = String(phone).trim().replace(/\s/g, '');
+    const doc = await WhatsappOtp.findOne({
+      phone: norm,
+      purpose: WHATSAPP_OTP_PURPOSE.password_reset,
+    });
+    if (!doc || doc.expiresAt.getTime() < Date.now()) {
+      return res.status(400).json({ error: 'Invalid or expired code. Request a new code from Forgot password.' });
+    }
+    if (doc.attempts >= 8) {
+      await WhatsappOtp.deleteOne({ _id: doc._id });
+      return res.status(400).json({ error: 'Too many attempts. Request a new WhatsApp code.' });
+    }
+    const otp = String(code).trim();
+    if (!verifyWhatsappOtpHash(norm, WHATSAPP_OTP_PURPOSE.password_reset, otp, doc.codeHash)) {
+      await WhatsappOtp.updateOne({ _id: doc._id }, { $inc: { attempts: 1 } });
+      return res.status(400).json({ error: 'Invalid verification code' });
+    }
+
+    const user = await User.findOne({
+      userType: ut,
+      $or: [{ phone: norm }, { phone: rawTrim }],
+    });
     if (!user) {
-      return res.status(400).json({ error: 'Invalid or expired token' });
+      await WhatsappOtp.deleteOne({ _id: doc._id });
+      return res.status(400).json({ error: 'Invalid or expired code' });
     }
 
-    // Update password
     user.password = newPassword;
     await user.save();
+    await WhatsappOtp.deleteOne({ _id: doc._id });
 
     res.json({ message: 'Password reset successfully' });
-
   } catch (error) {
     console.error('Reset password error:', error);
     res.status(500).json({ error: 'Password reset failed' });

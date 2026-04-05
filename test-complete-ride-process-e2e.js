@@ -49,7 +49,9 @@
  *   node test-complete-ride-process-e2e.js
  *
  * Rider WhatsApp OTP (production): required on POST /api/auth/register for userType rider.
- * For this script, set in Backend_GR/.env: RIDER_WHATSAPP_OTP_REQUIRED=0
+ * For this script, set in Backend_GR/.env:
+ *   RIDER_WHATSAPP_OTP_REQUIRED=0
+ *   DRIVER_WHATSAPP_OTP_REQUIRED=0
  *
  *   Remote (drivers often need admin approval):
  *   API_URL=https://api.example.com ADMIN_EMAIL=... ADMIN_PASSWORD=... node test-complete-ride-process-e2e.js
