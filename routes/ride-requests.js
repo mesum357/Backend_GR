@@ -486,7 +486,7 @@ router.get('/available-simple', authenticateJWT, async (req, res) => {
       status: { $in: ['searching', 'pending'] },
       expiresAt: { $gt: new Date() }
     })
-      .populate('rider', 'firstName lastName rating totalRides')
+      .populate('rider', 'firstName lastName phone rating totalRides profileImage')
       .sort({ createdAt: -1 })
       .limit(20);
 
@@ -532,7 +532,8 @@ router.get('/available-simple', authenticateJWT, async (req, res) => {
         estimatedDistance: Number.isFinite(numericDistance) ? numericDistance : 0,
         riderName: rider ? `${rider.firstName} ${rider.lastName}` : 'Unknown Rider',
         riderPhone: rider?.phone || 'N/A',
-        riderRating: rider?.rating || 4.5,
+        riderRating: typeof rider?.rating === 'number' ? rider.rating : 0,
+        riderProfileImage: rider?.profileImage || null,
         estimatedTime: request.estimatedDuration ? `${request.estimatedDuration} min` : 'Unknown',
         requestTime: request.createdAt ? new Date(request.createdAt).toLocaleTimeString() : 'Unknown',
         paymentMethod: request.paymentMethod || 'cash',

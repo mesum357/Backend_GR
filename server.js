@@ -835,30 +835,43 @@ io.on('connection', (socket) => {
       });
 
       // When rider accepts, emit driver_assigned with full driver info to rider
+      // Note: fareOffers[].driver is a User id — resolve Driver via { user } and names via User.
       if (action === 'accept') {
         try {
           const Driver = require('./models/Driver');
-          const driver = await Driver.findById(targetOffer.driver).select(
-            'firstName lastName phone rating vehicleType vehicleModel vehicleColor vehiclePlateNumber currentLocation'
-          );
+          const User = require('./models/User');
           const assignedDriverId = targetOffer.driver.toString();
+          const [driverUser, driverDoc] = await Promise.all([
+            User.findById(targetOffer.driver).select('firstName lastName phone rating profileImage').lean(),
+            Driver.findOne({ user: targetOffer.driver })
+              .select('vehicleInfo rating currentLocation')
+              .lean(),
+          ]);
+          const v = driverDoc?.vehicleInfo;
+          const driverRating =
+            typeof driverDoc?.rating === 'number' && driverDoc.rating > 0
+              ? driverDoc.rating
+              : typeof driverUser?.rating === 'number'
+                ? driverUser.rating
+                : 0;
           emitToUser(io, riderId, 'driver_assigned', {
             rideRequestId,
             driver: {
               _id: assignedDriverId,
               id: assignedDriverId,
-              firstName: driver ? driver.firstName : 'Driver',
-              lastName: driver ? driver.lastName : '',
-              phone: driver ? driver.phone : '',
-              rating: driver ? (driver.rating ?? 0) : 0,
+              firstName: driverUser?.firstName || 'Driver',
+              lastName: driverUser?.lastName || '',
+              phone: driverUser?.phone || '',
+              rating: driverRating,
+              profileImage: driverUser?.profileImage || null,
               vehicleInfo: {
-                make: driver ? (driver.vehicleType || 'Vehicle') : 'Vehicle',
-                model: driver ? (driver.vehicleModel || '') : '',
-                color: driver ? (driver.vehicleColor || '') : '',
-                plateNumber: driver ? (driver.vehiclePlateNumber || '---') : '---'
+                make: v?.make || v?.vehicleType || 'Vehicle',
+                model: v?.model || '',
+                color: v?.color || '',
+                plateNumber: v?.plateNumber || '---',
               },
-              currentLocation: driver ? driver.currentLocation : null
-            }
+              currentLocation: driverDoc?.currentLocation || null,
+            },
           });
           console.log(`🚗 driver_assigned emitted to rider ${riderId}`);
         } catch (driverLookupErr) {
