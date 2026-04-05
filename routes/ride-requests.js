@@ -669,20 +669,66 @@ router.patch('/:requestId/fare', authenticateJWT, async (req, res) => {
       return res.status(400).json({ error: 'Cannot update fare after ride is accepted/started' });
     }
 
+    const oldFare = rideRequest.requestedPrice || rideRequest.suggestedPrice || 0;
     rideRequest.requestedPrice = numericFare;
     rideRequest.suggestedPrice = numericFare;
+
+    // Clear pending fare offers — stale offers at the old fare shouldn't linger.
+    if (Array.isArray(rideRequest.fareOffers)) {
+      rideRequest.fareOffers.forEach((offer) => {
+        if (offer.status === 'pending') {
+          offer.status = 'rejected';
+          offer.respondedAt = new Date();
+        }
+      });
+    }
+
+    // Extend expiry so the updated ride stays visible on driver dashboards.
+    const systemSettings = await getSystemSettings();
+    const driverTimeoutMs = Number(systemSettings.driverTimeoutSeconds) * 1000;
+    rideRequest.expiresAt = new Date(Date.now() + driverTimeoutMs);
+
     await rideRequest.save();
 
-    const payload = {
+    const driverIds = collectRelevantDriverIds(rideRequest);
+
+    // Emit update so drivers who already have the card see the new fare.
+    const updatePayload = {
       rideRequestId: String(rideRequest._id),
       requestedPrice: numericFare,
       offeredFare: numericFare,
       estimatedFare: numericFare,
+      oldFare,
       updatedAt: new Date().toISOString(),
     };
+    driverIds.forEach((driverId) => emitToUserFromApp(req, driverId, 'ride_request_updated', updatePayload));
 
-    const driverIds = collectRelevantDriverIds(rideRequest);
-    driverIds.forEach((driverId) => emitToUserFromApp(req, driverId, 'ride_request_updated', payload));
+    // Also re-push a fresh ride_request so the card re-appears at the top
+    // (and any new nearby drivers see it too).
+    const User = require('../models/User');
+    const riderUser = await User.findById(rideRequest.rider).select('firstName lastName rating').lean();
+    const rideRequestPayload = {
+      rideRequestId: String(rideRequest._id),
+      rider: {
+        id: String(rideRequest.rider),
+        firstName: riderUser?.firstName || 'Rider',
+        lastName: riderUser?.lastName || '',
+        rating: riderUser?.rating || 0,
+      },
+      pickup: rideRequest.pickupLocation,
+      destination: rideRequest.destination,
+      distance: rideRequest.distance,
+      estimatedDuration: rideRequest.estimatedDuration,
+      offeredFare: numericFare,
+      vehicleType: rideRequest.vehicleType,
+      paymentMethod: rideRequest.paymentMethod,
+      notes: rideRequest.notes,
+      expiresAt: rideRequest.expiresAt,
+      createdAt: rideRequest.createdAt,
+    };
+    driverIds.forEach((driverId) =>
+      emitToUserFromApp(req, driverId, 'ride_request', rideRequestPayload)
+    );
 
     res.json({
       message: 'Fare updated successfully',

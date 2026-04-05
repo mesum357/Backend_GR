@@ -1432,6 +1432,119 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Rider confirms safe arrival → complete ride (same logic as end_ride but triggered by rider)
+  socket.on('rider_completed_ride', async (data, ack) => {
+    try {
+      const { rideRequestId, riderId, eventId } = data;
+      if (isDuplicateEvent(eventId)) {
+        if (typeof ack === 'function') ack({ ok: true, duplicate: true, eventId });
+        return;
+      }
+      const RideRequest = require('./models/RideRequest');
+      const rideRequest = await RideRequest.findById(rideRequestId);
+      if (!rideRequest) {
+        socket.emit('error', { message: 'Ride request not found' });
+        if (typeof ack === 'function') ack({ ok: false, error: 'Ride request not found' });
+        return;
+      }
+      if (rideRequest.status === 'completed') {
+        if (typeof ack === 'function') ack({ ok: true, duplicate: true, eventId });
+        return;
+      }
+      if (String(rideRequest.rider) !== String(riderId)) {
+        socket.emit('error', { message: 'Not authorized' });
+        if (typeof ack === 'function') ack({ ok: false, error: 'Not authorized' });
+        return;
+      }
+
+      rideRequest.status = 'completed';
+      rideRequest.completedAt = new Date();
+      await rideRequest.save();
+
+      const effectiveDriverId = rideRequest.acceptedBy
+        ? String(rideRequest.acceptedBy)
+        : '';
+      const riderUid = String(rideRequest.rider);
+      const completionPayload = {
+        rideRequestId,
+        driverId: effectiveDriverId,
+        completedByRider: true,
+      };
+
+      emitToUser(io, riderUid, 'ride_completed', completionPayload);
+      if (effectiveDriverId) {
+        emitToUser(io, effectiveDriverId, 'ride_completed', completionPayload);
+        emitToUser(io, effectiveDriverId, 'rider_confirmed_arrival', {
+          rideRequestId,
+          message: 'The rider has marked the ride as completed.',
+        });
+      }
+
+      // Bridge Ride document + commission (same as end_ride)
+      const Ride = require('./models/Ride');
+      try {
+        const existingRide = await Ride.findById(rideRequest._id).select('_id');
+        if (!existingRide) {
+          const effectiveDestination = {
+            address: rideRequest.destination?.address || rideRequest.destinationLocation?.address || '',
+            latitude: rideRequest.destination?.latitude ?? rideRequest.destinationLocation?.latitude ?? 0,
+            longitude: rideRequest.destination?.longitude ?? rideRequest.destinationLocation?.longitude ?? 0,
+          };
+          const ride = new Ride({
+            _id: rideRequest._id,
+            rider: rideRequest.rider,
+            driver: effectiveDriverId || null,
+            pickup: {
+              address: rideRequest.pickupLocation?.address || '',
+              location: { type: 'Point', coordinates: [rideRequest.pickupLocation?.longitude || 0, rideRequest.pickupLocation?.latitude || 0] },
+            },
+            destination: {
+              address: effectiveDestination.address || '',
+              location: { type: 'Point', coordinates: [effectiveDestination.longitude || 0, effectiveDestination.latitude || 0] },
+            },
+            status: 'completed',
+            rideType: normalizeRideTypeKey(rideRequest.vehicleType || 'ride_mini'),
+            price: { amount: rideRequest.requestedPrice || rideRequest.suggestedPrice || 0, currency: 'PKR', negotiated: true },
+            distance: rideRequest.distance || 0,
+            duration: rideRequest.estimatedDuration || 0,
+            paymentMethod: rideRequest.paymentMethod || 'cash',
+            rating: { riderRating: null, driverRating: null, riderComment: null, driverComment: null },
+            endTime: new Date(),
+          });
+          await ride.save();
+        }
+      } catch (bridgeErr) {
+        console.error('rider_completed_ride Ride bridge error (non-fatal):', bridgeErr?.message || bridgeErr);
+      }
+
+      // Deduct commission
+      try {
+        if (effectiveDriverId) {
+          const fare = rideRequest.requestedPrice || rideRequest.suggestedPrice || 0;
+          const result = await deductDriverCommissionForRide({
+            rideId: rideRequest._id,
+            driverUserId: effectiveDriverId,
+            vehicleType: rideRequest.vehicleType || 'ride_mini',
+            fareAmount: fare,
+          });
+          if (result?.deducted) {
+            await Ride.findByIdAndUpdate(rideRequest._id, {
+              $set: { driverCommissionPct: result.pct || 0, driverCommissionAmount: result.amount || 0, commissionDeductedAt: new Date() },
+            });
+          }
+        }
+      } catch { /* ignore */ }
+
+      console.log(`✅ Ride ${rideRequestId} completed by rider ${riderId}`);
+      markEventProcessed(eventId);
+      if (typeof ack === 'function') ack({ ok: true, eventId });
+    } catch (err) {
+      console.error('Error handling rider_completed_ride:', err);
+      socket.emit('error', { message: 'Failed to complete ride' });
+      if (typeof ack === 'function') ack({ ok: false, error: 'Failed to complete ride' });
+    }
+  });
+
   // Handle disconnection
   socket.on('disconnect', () => {
     console.log(`🔌 Disconnected: ${socket.id}`);
