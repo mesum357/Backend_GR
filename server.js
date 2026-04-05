@@ -869,6 +869,7 @@ io.on('connection', (socket) => {
                 model: v?.model || '',
                 color: v?.color || '',
                 plateNumber: v?.plateNumber || '---',
+                vehicleName: v?.vehicleName || null,
               },
               currentLocation: driverDoc?.currentLocation || null,
             },
