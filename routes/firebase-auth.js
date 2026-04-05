@@ -2,51 +2,62 @@ const express = require('express');
 const router = express.Router();
 const { helpers } = require('../config/firebase');
 const User = require('../models/User');
-const WhatsappOtp = require('../models/WhatsappOtp');
+const EmailVerificationOtp = require('../models/EmailVerificationOtp');
+const { normalizeRiderPhone } = require('../lib/riderPhoneVerification');
 const {
-  normalizeRiderPhone,
-  verifyWhatsappOtpHash,
-  WHATSAPP_OTP_PURPOSE,
-} = require('../lib/riderPhoneVerification');
+  EMAIL_OTP_PURPOSE,
+  normalizeSignupEmail,
+  verifyEmailOtpHash,
+} = require('../lib/emailOtpCrypto');
 const { generateToken } = require('../middleware/auth');
 
 // Firebase-based user registration
 router.post('/register', async (req, res) => {
   try {
-    const { email, password, firstName, lastName, phone, userType, firebaseUid, whatsappOtp } = req.body;
+    const {
+      email,
+      password,
+      firstName,
+      lastName,
+      phone,
+      userType,
+      firebaseUid,
+      emailVerificationCode,
+    } = req.body;
     const resolvedType = userType || 'rider';
     const rawPhone = String(phone || '').trim();
     const normalizedPhone = normalizeRiderPhone(phone);
-    const riderOtpRequired = process.env.RIDER_WHATSAPP_OTP_REQUIRED !== '0';
-    const driverOtpRequired = process.env.DRIVER_WHATSAPP_OTP_REQUIRED !== '0';
+    const emailNorm = normalizeSignupEmail(email);
+    const emailOtpRequired = process.env.EMAIL_VERIFICATION_REQUIRED !== '0';
+    const otpInput = emailVerificationCode ?? req.body.emailOtp ?? req.body.whatsappOtp;
 
     async function consumeOtp(purpose, otpRaw) {
       const otp = String(otpRaw || '').trim();
       if (!/^\d{6}$/.test(otp)) {
-        return { error: 'Enter the 6-digit WhatsApp code' };
+        return { error: 'Enter the 6-digit email verification code' };
       }
-      const doc = await WhatsappOtp.findOne({ phone: normalizedPhone, purpose });
+      const doc = await EmailVerificationOtp.findOne({ email: emailNorm, purpose });
       if (!doc || doc.expiresAt.getTime() < Date.now()) {
-        return { error: 'Code expired or not found. Send a new WhatsApp code.' };
+        return { error: 'Code expired or not found. Request a new verification email.' };
       }
       if (doc.attempts >= 8) {
-        await WhatsappOtp.deleteOne({ _id: doc._id });
-        return { error: 'Too many failed attempts. Request a new WhatsApp code.' };
+        await EmailVerificationOtp.deleteOne({ _id: doc._id });
+        return { error: 'Too many failed attempts. Request a new verification code.' };
       }
-      if (!verifyWhatsappOtpHash(normalizedPhone, purpose, otp, doc.codeHash)) {
-        await WhatsappOtp.updateOne({ _id: doc._id }, { $inc: { attempts: 1 } });
-        return { error: 'Invalid WhatsApp verification code' };
+      if (!verifyEmailOtpHash(emailNorm, purpose, otp, doc.codeHash)) {
+        await EmailVerificationOtp.updateOne({ _id: doc._id }, { $inc: { attempts: 1 } });
+        return { error: 'Invalid verification code' };
       }
-      await WhatsappOtp.deleteOne({ _id: doc._id });
+      await EmailVerificationOtp.deleteOne({ _id: doc._id });
       return null;
     }
 
-    if (resolvedType === 'rider' && riderOtpRequired) {
-      const bad = await consumeOtp(WHATSAPP_OTP_PURPOSE.rider_register, whatsappOtp);
+    if (resolvedType === 'rider' && emailOtpRequired) {
+      const bad = await consumeOtp(EMAIL_OTP_PURPOSE.rider_register, otpInput);
       if (bad) return res.status(400).json({ error: bad.error });
     }
-    if (resolvedType === 'driver' && driverOtpRequired) {
-      const bad = await consumeOtp(WHATSAPP_OTP_PURPOSE.driver_register, whatsappOtp);
+    if (resolvedType === 'driver' && emailOtpRequired) {
+      const bad = await consumeOtp(EMAIL_OTP_PURPOSE.driver_register, otpInput);
       if (bad) return res.status(400).json({ error: bad.error });
     }
 
