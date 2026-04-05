@@ -23,7 +23,8 @@
     "e2e:rider-arrived:remote": "node test-rider-arrived-persistence-e2e.js",
     "e2e:view-count": "node run-e2e-driver-view-count-local.js",
     "e2e:view-count:remote": "node test-driver-view-count-finding-modal-e2e.js",
-    "e2e:all-critical": "node run-e2e-all-critical-local.js"
+    "e2e:all-critical": "node run-e2e-all-critical-local.js",
+    "e2e:complete-ride": "node test-complete-ride-process-e2e.js"
   },
   "keywords": [
     "express",
