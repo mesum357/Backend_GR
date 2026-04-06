@@ -844,6 +844,25 @@ router.post('/:requestId/respond', authenticateJWT, async (req, res) => {
       return res.status(400).json({ error: 'Ride request has expired' });
     }
 
+    // Driver opened the request earlier; rider may have changed fare since then.
+    if (actionToUse === 'accept' || actionToUse === 'counter_offer') {
+      const rawSeen = req.body?.requestedPriceSeenByDriver;
+      if (rawSeen !== undefined && rawSeen !== null && String(rawSeen).trim() !== '') {
+        const seen = Number(rawSeen);
+        if (Number.isFinite(seen) && seen > 0) {
+          const current = Number(rideRequest.requestedPrice);
+          if (Number.isFinite(current) && Math.abs(seen - current) > 0.01) {
+            return res.status(409).json({
+              error:
+                'The rider has updated the fare. Please return to your dashboard to see the latest details.',
+              code: 'RIDER_FARE_CHANGED',
+              requestedPrice: current,
+            });
+          }
+        }
+      }
+    }
+
     // Find driver in available drivers list.
     // If missing (race/edge case), append a minimal entry so offer/response can proceed.
     let driverIndex = rideRequest.availableDrivers.findIndex(
