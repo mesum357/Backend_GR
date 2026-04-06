@@ -75,7 +75,17 @@ router.patch('/wallet/transactions/:transactionId/approve', authenticateAdminJWT
       return res.status(404).json({ error: 'Driver profile not found' });
     }
 
-    driver.wallet.balance = Number(driver.wallet.balance || 0) + Number(tx.amount);
+    let creditAmount = Number(tx.amount);
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'amount')) {
+      const n = Number(req.body.amount);
+      if (!Number.isFinite(n) || n < 0) {
+        return res.status(400).json({ error: 'Invalid amount' });
+      }
+      creditAmount = n;
+      tx.amount = n;
+    }
+
+    driver.wallet.balance = Number(driver.wallet.balance || 0) + Number(creditAmount);
     driver.wallet.lastTransactionAt = new Date();
     await driver.save();
 
