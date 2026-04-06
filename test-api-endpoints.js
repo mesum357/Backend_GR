@@ -59,117 +59,31 @@ async function testAPIEndpoints() {
     const data = await response.json();
     console.log('✅ Health check successful');
     console.log(`   Status: ${data.status}`);
-    console.log(`   Message: ${data.message}`);
-    console.log(`   Firebase: ${data.firebase}\n`);
+    console.log(`   Message: ${data.message}\n`);
   } catch (error) {
     console.log('❌ Health check failed');
     console.log(`   Error: ${error.message}\n`);
   }
 
-  // Test 2: Firebase status endpoint
-  console.log('2. Testing Firebase status endpoint...');
+  // Test 2: Auth profile without JWT (should fail)
+  console.log('2. Testing /auth/profile without token...');
   try {
-    const response = await fetch(`${BASE_URL}/firebase/status`);
-    const data = await response.json();
-    console.log('✅ Firebase status successful');
-    console.log(`   Firebase: ${data.firebase}`);
-    console.log(`   Auth: ${data.auth}`);
-    console.log(`   Firestore: ${data.firestore}`);
-    console.log(`   Storage: ${data.storage}\n`);
-  } catch (error) {
-    console.log('❌ Firebase status failed');
-    console.log(`   Error: ${error.message}\n`);
-  }
-
-  // Test 3: Firebase routes status
-  console.log('3. Testing Firebase routes status...');
-  try {
-    const response = await fetch(`${BASE_URL}/firebase/status`);
-    const data = await response.json();
-    console.log('✅ Firebase routes working');
-    console.log(`   Message: ${data.message}\n`);
-  } catch (error) {
-    console.log('❌ Firebase routes failed');
-    console.log(`   Error: ${error.message}\n`);
-  }
-
-  // Test 4: Test protected endpoint without token (should fail)
-  console.log('4. Testing protected endpoint without token...');
-  try {
-    const response = await fetch(`${BASE_URL}/firebase/me`);
+    const response = await fetch(`${BASE_URL}/auth/profile`);
     if (response.status === 401) {
-      console.log('✅ Protected endpoint correctly requires authentication');
+      console.log('✅ Profile endpoint correctly requires JWT');
       console.log(`   Status: ${response.status} (Unauthorized)\n`);
     } else {
-      console.log('❌ Protected endpoint should have returned 401');
+      console.log('❌ Profile should return 401 without Authorization');
       console.log(`   Status: ${response.status}\n`);
     }
   } catch (error) {
-    console.log('❌ Protected endpoint test failed');
-    console.log(`   Error: ${error.message}\n`);
-  }
-
-  // Test 5: Test token verification endpoint with invalid token
-  console.log('5. Testing token verification with invalid token...');
-  try {
-    const response = await fetch(`${BASE_URL}/firebase/verify-token`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        idToken: 'invalid-token'
-      })
-    });
-    const data = await response.json();
-    
-    if (response.status === 401) {
-      console.log('✅ Token verification correctly rejected invalid token');
-      console.log(`   Status: ${response.status} (Unauthorized)`);
-      console.log(`   Valid: ${data.valid}\n`);
-    } else {
-      console.log('❌ Token verification should have returned 401');
-      console.log(`   Status: ${response.status}\n`);
-    }
-  } catch (error) {
-    console.log('❌ Token verification test failed');
-    console.log(`   Error: ${error.message}\n`);
-  }
-
-  // Test 6: Test custom token creation (this should work)
-  console.log('6. Testing custom token creation...');
-  try {
-    const response = await fetch(`${BASE_URL}/firebase/custom-token`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer test-token' // This will be rejected, but we're testing the endpoint
-      },
-      body: JSON.stringify({
-        uid: 'test-user-api',
-        additionalClaims: { role: 'rider' }
-      })
-    });
-    
-    if (response.status === 401) {
-      console.log('✅ Custom token endpoint correctly requires authentication');
-      console.log(`   Status: ${response.status} (Unauthorized)\n`);
-    } else {
-      console.log('❌ Custom token endpoint should have returned 401');
-      console.log(`   Status: ${response.status}\n`);
-    }
-  } catch (error) {
-    console.log('❌ Custom token test failed');
+    console.log('❌ Profile test failed');
     console.log(`   Error: ${error.message}\n`);
   }
 
   console.log('🎉 API Endpoints Test Summary:');
   console.log('✅ Health check endpoint is working');
-  console.log('✅ Firebase status endpoint is working');
-  console.log('✅ Firebase routes are working');
-  console.log('✅ Authentication middleware is working');
-  console.log('✅ Protected endpoints are properly secured');
-  console.log('✅ Token verification is working');
+  console.log('✅ JWT-protected routes reject unauthenticated requests');
   console.log('\n🚀 Your API endpoints are ready for use!');
 }
 

@@ -46,11 +46,6 @@ const userSchema = new mongoose.Schema({
       message: 'Please enter a valid phone number'
     }
   },
-  firebaseUid: {
-    type: String,
-    unique: true,
-    sparse: true // Allows multiple null values
-  },
   userType: {
     type: String,
     enum: ['rider', 'driver'],

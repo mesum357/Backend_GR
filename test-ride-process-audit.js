@@ -228,7 +228,6 @@ async function run() {
     ok('1.1 Server health', r.ok, `status ${r.status}`);
     if (r.data) {
       ok('1.1a MongoDB connected', r.data.mongo?.ready === true, `readyState=${r.data.mongo?.readyState}`);
-      if (r.data.firebase !== 'Initialized') warn('1.1b Firebase not initialized', r.data.firebase);
     }
   } catch (e) {
     FAIL(`1.1 Health: ${e.message}`); failed++;

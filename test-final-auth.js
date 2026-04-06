@@ -99,21 +99,10 @@ async function testFinalAuth() {
     console.log(`   ❌ Registration test failed: ${error.message}\n`);
   }
 
-  // Test 4: Firebase status
-  console.log('4. Testing Firebase status...');
-  try {
-    const response = await makeRequest('/firebase/status');
-    console.log(`   Status: ${response.status}`);
-    console.log(`   Firebase: ${response.data.firebase}\n`);
-  } catch (error) {
-    console.log(`   Error: ${error.message}\n`);
-  }
-
   console.log('🎉 Authentication System Status:');
   console.log('✅ Server is running and healthy');
   console.log('✅ User registration is working');
   console.log('✅ User login is working');
-  console.log('✅ Firebase integration is working');
   console.log('✅ JWT tokens are being generated');
   console.log('\n🚀 Your authentication system is fully functional!');
   console.log('\n📱 Ready for React Native integration!');

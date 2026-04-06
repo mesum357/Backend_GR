@@ -14,8 +14,6 @@ require('dotenv').config();
 // Import passport configuration
 require('./config/passport');
 
-// Import Firebase configuration
-const firebase = require('./config/firebase');
 const { ensureRideRoutePolylineSaved } = require('./services/ensureRideRoutePolyline');
 
 const app = express();
@@ -113,9 +111,7 @@ const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
 const rideRoutes = require('./routes/rides');
 const driverRoutes = require('./routes/drivers');
-const firebaseRoutes = require('./routes/firebase');
 const rideRequestRoutes = require('./routes/ride-requests');
-const firebaseAuthRoutes = require('./routes/firebase-auth');
 const driverWalletRoutes = require('./routes/driverWallet');
 const fareOfferRoutes = require('./routes/fare-offers');
 const vehicleRoutes = require('./routes/vehicles');
@@ -147,9 +143,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/rides', rideRoutes);
 app.use('/api/drivers', driverRoutes);
-app.use('/api/firebase', firebaseRoutes);
 app.use('/api/ride-requests', rideRequestRoutes);
-app.use('/api/firebase-auth', firebaseAuthRoutes);
 app.use('/api/driver/wallet', driverWalletRoutes);
 app.use('/api/fare-offers', fareOfferRoutes);
 app.use('/api/vehicles', vehicleRoutes);
@@ -181,17 +175,6 @@ app.get('/api/health', (req, res) => {
     status: mongoOk ? 'OK' : 'degraded',
     message: mongoOk ? 'Server is running' : 'MongoDB not connected',
     mongo: { ready: mongoOk, readyState: mongoose.connection.readyState },
-    firebase: firebase.admin ? 'Initialized' : 'Not configured',
-  });
-});
-
-// Firebase endpoints
-app.get('/api/firebase/status', (req, res) => {
-  res.json({
-    firebase: firebase.admin ? 'Initialized' : 'Not configured',
-    auth: firebase.auth ? 'Available' : 'Not available',
-    firestore: firebase.firestore ? 'Available' : 'Not available',
-    storage: firebase.storage ? 'Available' : 'Not available'
   });
 });
 

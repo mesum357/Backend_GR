@@ -41,13 +41,8 @@ async function quickTest() {
     const health = await testEndpoint('/health');
     console.log(`   ✅ Status: ${health.status} - ${health.data.message}\n`);
 
-    // Test 2: Firebase status
-    console.log('2. Firebase Status...');
-    const firebase = await testEndpoint('/firebase/status');
-    console.log(`   ✅ Status: ${firebase.status} - Firebase: ${firebase.data.firebase}\n`);
-
-    // Test 3: Register a test user
-    console.log('3. User Registration...');
+    // Test 2: Register a test user
+    console.log('2. User Registration...');
     const userData = {
       email: `testuser${Date.now()}@example.com`,
       password: '123456',
@@ -60,8 +55,8 @@ async function quickTest() {
     const register = await testEndpoint('/auth/register', 'POST', userData);
     console.log(`   ✅ Status: ${register.status} - ${register.data.message}\n`);
 
-    // Test 4: Login with the same user
-    console.log('4. User Login...');
+    // Test 3: Login with the same user
+    console.log('3. User Login...');
     const login = await testEndpoint('/auth/login', 'POST', {
       email: userData.email,
       password: userData.password
@@ -72,8 +67,6 @@ async function quickTest() {
     console.log('\n📱 Your React Native app can now connect to:');
     console.log('   http://192.168.1.14:8080/api/auth/register');
     console.log('   http://192.168.1.14:8080/api/auth/login');
-    console.log('   http://192.168.1.14:8080/api/firebase-auth/register');
-    console.log('   http://192.168.1.14:8080/api/firebase-auth/login');
 
   } catch (error) {
     console.log(`❌ Test failed: ${error.message}`);
