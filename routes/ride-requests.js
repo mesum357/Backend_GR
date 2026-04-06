@@ -570,9 +570,11 @@ router.get('/available', authenticateJWT, async (req, res) => {
       return res.status(400).json({ error: 'Location coordinates are required' });
     }
 
-    // Find pending ride requests within radius
+    // Find ride requests within radius that are visible on driver dashboard.
+    // Keep in sync with the driver app which treats these statuses as "active":
+    // searching, pending, counter_offered, fare_offered
     const rideRequests = await RideRequest.find({
-      status: 'pending',
+      status: { $in: ['searching', 'pending', 'counter_offered', 'fare_offered'] },
       expiresAt: { $gt: new Date() },
       'pickupLocation.latitude': {
         $gte: parseFloat(latitude) - (radius / 111), // Approximate degrees

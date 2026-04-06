@@ -977,6 +977,8 @@ io.on('connection', (socket) => {
         if (typeof ack === 'function') ack({ ok: true, duplicate: true, eventId });
         return;
       }
+      // Mark immediately to prevent concurrent duplicate fan-out.
+      markEventProcessed(eventId);
       const RideRequest = require('./models/RideRequest');
       const rideRequest = await RideRequest.findById(rideRequestId);
       if (!rideRequest) {
@@ -995,7 +997,6 @@ io.on('connection', (socket) => {
       }
       emitToUser(io, assignedDriverId, 'rider_at_pickup', payload);
       console.log(`📍 Rider ${riderId} confirmed at pickup, notifying driver ${assignedDriverId}`);
-      markEventProcessed(eventId);
       if (typeof ack === 'function') ack({ ok: true, eventId });
     } catch (err) {
       console.error('Error handling rider_arrived:', err);
@@ -1279,6 +1280,8 @@ io.on('connection', (socket) => {
         if (typeof ack === 'function') ack({ ok: true, duplicate: true, eventId });
         return;
       }
+      // Mark immediately to prevent concurrent duplicate fan-out.
+      markEventProcessed(eventId);
       const RideRequest = require('./models/RideRequest');
       const rideRequest = await RideRequest.findById(rideRequestId);
       if (!rideRequest) {
@@ -1292,7 +1295,6 @@ io.on('connection', (socket) => {
       emitToUser(io, rideRequest.rider, 'ride_started', { rideRequestId, driverId });
       console.log(`🚗 Ride ${rideRequestId} started by driver ${driverId}`);
       socket.emit('ride_started_ack', { rideRequestId });
-      markEventProcessed(eventId);
       if (typeof ack === 'function') ack({ ok: true, eventId });
     } catch (err) {
       console.error('Error handling start_ride:', err);
@@ -1309,6 +1311,8 @@ io.on('connection', (socket) => {
         if (typeof ack === 'function') ack({ ok: true, duplicate: true, eventId });
         return;
       }
+      // Mark immediately to prevent concurrent duplicate fan-out.
+      markEventProcessed(eventId);
       const RideRequest = require('./models/RideRequest');
       const Ride = require('./models/Ride');
       const rideRequest = await RideRequest.findById(rideRequestId);
@@ -1333,7 +1337,8 @@ io.on('connection', (socket) => {
       // Emit FIRST so clients always get notified even if Ride bridge fails later.
       emitToUser(io, riderUid, 'ride_completed', completionPayload);
       if (effectiveDriverId) emitToUser(io, effectiveDriverId, 'ride_completed', completionPayload);
-      socket.emit('ride_completed', { rideRequestId });
+      // Don't echo ride_completed back to the initiating socket; drivers were getting duplicates.
+      socket.emit('ride_completed_ack', { rideRequestId });
 
       // Ensure a Ride document exists for the rating system.
       // The app currently rates using POST `/api/rides/:rideId/rate`,
@@ -1423,7 +1428,6 @@ io.on('connection', (socket) => {
       }
 
       console.log(`✅ Ride ${rideRequestId} completed by driver ${effectiveDriverId || driverId}`);
-      markEventProcessed(eventId);
       if (typeof ack === 'function') ack({ ok: true, eventId });
     } catch (err) {
       console.error('Error handling end_ride:', err);
