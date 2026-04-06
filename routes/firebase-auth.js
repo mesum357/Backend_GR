@@ -10,6 +10,8 @@ const {
   verifyEmailOtpHash,
 } = require('../lib/emailOtpCrypto');
 const { generateToken } = require('../middleware/auth');
+const { bumpAuthSessionReturnUser } = require('../lib/bumpAuthSession');
+const { revokeStaleUserSockets } = require('../lib/revokeStaleUserSockets');
 const { validateSignupPassword } = require('../lib/signupPasswordPolicy');
 
 // Firebase-based user registration
@@ -95,13 +97,15 @@ router.post('/register', async (req, res) => {
 
     await user.save();
 
-    // Generate JWT token
-    const token = generateToken(user);
+    const freshUser = await bumpAuthSessionReturnUser(user._id);
+    const io = req.app.get('io');
+    revokeStaleUserSockets(io, freshUser._id, Number(freshUser.authSessionVersion) || 0);
+    const token = generateToken(freshUser);
 
     res.status(201).json({
       message: 'User registered successfully',
       token,
-      user: user.getPublicProfile()
+      user: freshUser.getPublicProfile()
     });
 
   } catch (error) {
@@ -133,13 +137,15 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Generate JWT token
-    const token = generateToken(user);
+    const freshUser = await bumpAuthSessionReturnUser(user._id);
+    const io = req.app.get('io');
+    revokeStaleUserSockets(io, freshUser._id, Number(freshUser.authSessionVersion) || 0);
+    const token = generateToken(freshUser);
 
     res.json({
       message: 'Login successful',
       token,
-      user: user.getPublicProfile()
+      user: freshUser.getPublicProfile()
     });
 
   } catch (error) {

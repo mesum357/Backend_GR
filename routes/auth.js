@@ -14,6 +14,8 @@ const {
 } = require('../lib/emailOtpCrypto');
 const { sendEmailVerificationCode } = require('../lib/sendTransactionalEmail');
 const { validateSignupPassword } = require('../lib/signupPasswordPolicy');
+const { bumpAuthSessionReturnUser } = require('../lib/bumpAuthSession');
+const { revokeStaleUserSockets } = require('../lib/revokeStaleUserSockets');
 const { authenticateLocal, authenticateJWT, generateToken } = require('../middleware/auth');
 const router = express.Router();
 
@@ -251,15 +253,17 @@ router.post('/register', async (req, res) => {
       }
     }
 
-    // Generate JWT token
-    const token = generateToken(user);
+    const freshUser = await bumpAuthSessionReturnUser(user._id);
+    const io = req.app.get('io');
+    revokeStaleUserSockets(io, freshUser._id, Number(freshUser.authSessionVersion) || 0);
+    const token = generateToken(freshUser);
 
     res.status(201).json({
       message: userType === 'driver'
         ? 'Driver request submitted successfully'
         : 'User registered successfully',
       token,
-      user: user.getPublicProfile()
+      user: freshUser.getPublicProfile()
     });
 
   } catch (error) {
@@ -294,83 +298,75 @@ router.post('/register', async (req, res) => {
 });
 
 // Login user
-router.post('/login', authenticateLocal, (req, res) => {
+router.post('/login', authenticateLocal, async (req, res) => {
   try {
     const { expectedUserType } = req.body;
     const user = req.user;
-    
+
     // Check if expected user type is provided and valid
     if (!expectedUserType) {
-      return res.status(400).json({ 
-        error: 'User type must be specified for login' 
+      return res.status(400).json({
+        error: 'User type must be specified for login',
       });
     }
-    
+
     if (!['rider', 'driver'].includes(expectedUserType)) {
-      return res.status(400).json({ 
-        error: 'Invalid user type. Must be either "rider" or "driver"' 
+      return res.status(400).json({
+        error: 'Invalid user type. Must be either "rider" or "driver"',
       });
     }
-    
+
     if (user.userType !== expectedUserType) {
       const userTypeName = user.userType === 'driver' ? 'Driver' : 'Rider';
       const expectedTypeName = expectedUserType === 'driver' ? 'Driver' : 'Rider';
-      
-      return res.status(400).json({ 
+
+      return res.status(400).json({
         error: `This account is registered as a ${userTypeName}. Please use ${expectedTypeName} Login instead.`,
         userType: user.userType,
-        expectedUserType: expectedUserType
+        expectedUserType: expectedUserType,
       });
     }
 
     // Block driver login until approved
     if (expectedUserType === 'driver') {
       const Driver = require('../models/Driver');
-      Driver.findOne({ user: user._id })
-        .select('isApproved approvalStatus rejectionReason')
-        .then((driver) => {
-          if (!driver) {
-            return res.status(403).json({ error: 'Driver profile not found. Please complete driver registration.' });
-          }
-          if (driver.approvalStatus === 'rejected') {
-            const reason = driver.rejectionReason ? ` Reason: ${driver.rejectionReason}` : '';
-            return res.status(403).json({ error: `Your driver request was rejected.${reason}` });
-          }
-          if (!driver.isApproved || driver.approvalStatus !== 'approved') {
-            return res.status(403).json({ error: 'Your driver request is under review. Please wait for admin approval.' });
-          }
-
-          const token = generateToken(user);
-          return res.json({
-            message: 'Login successful',
-            token,
-            user: user.getPublicProfile()
-          });
-        })
-        .catch((e) => {
-          console.error('Driver approval check error:', e);
-          return res.status(500).json({ error: 'Authentication error' });
+      const driver = await Driver.findOne({ user: user._id }).select(
+        'isApproved approvalStatus rejectionReason'
+      );
+      if (!driver) {
+        return res.status(403).json({ error: 'Driver profile not found. Please complete driver registration.' });
+      }
+      if (driver.approvalStatus === 'rejected') {
+        const reason = driver.rejectionReason ? ` Reason: ${driver.rejectionReason}` : '';
+        return res.status(403).json({ error: `Your driver request was rejected.${reason}` });
+      }
+      if (!driver.isApproved || driver.approvalStatus !== 'approved') {
+        return res.status(403).json({
+          error: 'Your driver request is under review. Please wait for admin approval.',
         });
-      return;
+      }
     }
-    
-    const token = generateToken(user);
-    
-    res.json({
+
+    const freshUser = await bumpAuthSessionReturnUser(user._id);
+    const io = req.app.get('io');
+    revokeStaleUserSockets(io, freshUser._id, Number(freshUser.authSessionVersion) || 0);
+    const token = generateToken(freshUser);
+
+    return res.json({
       message: 'Login successful',
       token,
-      user: user.getPublicProfile()
+      user: freshUser.getPublicProfile(),
     });
   } catch (error) {
     console.error('Login error:', error);
-    
+
     // Handle specific errors
     if (error.name === 'ValidationError') {
       return res.status(400).json({ error: 'Invalid login data' });
     }
-    
+
     // Generic server error
-    res.status(500).json({ error: 'Authentication error' });
+    return res.status(500).json({ error: 'Authentication error' });
   }
 });
 

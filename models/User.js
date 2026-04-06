@@ -108,7 +108,13 @@ const userSchema = new mongoose.Schema({
       type: Boolean,
       default: true
     }
-  }
+  },
+  /** Bumped on each login/register so only the latest JWT remains valid (single active session). */
+  authSessionVersion: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
 }, {
   timestamps: true
 });

@@ -54,7 +54,8 @@ async function testAuthDirect() {
     const mockUser = {
       _id: '507f1f77bcf86cd799439011',
       email: 'test@example.com',
-      userType: 'rider'
+      userType: 'rider',
+      authSessionVersion: 0,
     };
 
     const token = generateToken(mockUser);

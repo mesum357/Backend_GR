@@ -7,11 +7,17 @@ const authenticateJWT = (req, res, next) => {
     if (err) {
       return res.status(500).json({ error: 'Authentication error' });
     }
-    
+
     if (!user) {
+      if (info && info.code === 'SESSION_SUPERSEDED') {
+        return res.status(401).json({
+          error: 'This account was signed in on another device. Please sign in again.',
+          code: 'SESSION_SUPERSEDED',
+        });
+      }
       return res.status(401).json({ error: 'Unauthorized - Invalid token' });
     }
-    
+
     req.user = user;
     next();
   })(req, res, next);
@@ -71,11 +77,14 @@ const requireOnline = (req, res, next) => {
 
 // Generate JWT token
 const generateToken = (user) => {
+  const sv = Number(user.authSessionVersion);
+  const sessionVersion = Number.isFinite(sv) ? sv : 0;
   return jwt.sign(
-    { 
-      id: user._id, 
-      email: user.email, 
-      userType: user.userType 
+    {
+      id: user._id,
+      email: user.email,
+      userType: user.userType,
+      sv: sessionVersion,
     },
     process.env.JWT_SECRET || 'your-jwt-secret',
     { expiresIn: '7d' }

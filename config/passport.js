@@ -37,11 +37,19 @@ const jwtOptions = {
 passport.use(new JwtStrategy(jwtOptions, async (payload, done) => {
   try {
     const user = await User.findById(payload.id);
-    
+
     if (!user) {
       return done(null, false);
     }
-    
+
+    const dbSv = Number(user.authSessionVersion);
+    const tokenSv = Number(payload.sv);
+    const dbSessionVersion = Number.isFinite(dbSv) ? dbSv : 0;
+    const jwtSessionVersion = Number.isFinite(tokenSv) ? tokenSv : 0;
+    if (jwtSessionVersion !== dbSessionVersion) {
+      return done(null, false, { code: 'SESSION_SUPERSEDED' });
+    }
+
     return done(null, user);
   } catch (error) {
     return done(error, false);

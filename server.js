@@ -214,6 +214,10 @@ const io = socketIo(server, {
   }
 });
 
+app.set('io', io);
+
+const jwt = require('jsonwebtoken');
+
 // Store active connections
 const activeConnections = new Map(); // userId -> socketId
 const driverConnections = new Map(); // driverId -> socketId
@@ -350,12 +354,27 @@ io.on('connection', (socket) => {
 
   // Handle user authentication
   socket.on('authenticate', (data) => {
-    const { userId: rawUserId, userType } = data;
+    const { userId: rawUserId, userType, token: rawToken } = data || {};
     const userId = rawUserId != null ? String(rawUserId) : '';
     if (!userId) {
       console.warn('Socket authenticate: missing userId');
       return;
     }
+
+    let sessionVersion = 0;
+    if (rawToken && typeof rawToken === 'string') {
+      try {
+        const payload = jwt.verify(rawToken, process.env.JWT_SECRET || 'your-jwt-secret');
+        if (String(payload.id) === userId) {
+          const v = Number(payload.sv);
+          sessionVersion = Number.isFinite(v) ? v : 0;
+        }
+      } catch {
+        sessionVersion = 0;
+      }
+    }
+    socket.data.sessionVersion = sessionVersion;
+
     socket.data.userId = userId;
     socket.data.userType = userType === 'driver' ? 'driver' : 'rider';
     activeConnections.set(userId, socket.id);
