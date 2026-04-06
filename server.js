@@ -1010,7 +1010,8 @@ io.on('connection', (socket) => {
   // Throttled live GPS during active ride (rider <-> driver maps)
   // Server-side throttle: one relay per sender per 2 seconds
   const liveLocLastEmit = new Map(); // `${rideRequestId}:${senderId}` -> timestamp
-  const LIVE_LOC_THROTTLE_MS = 2000;
+  /** ~1 Hz live relay; client also throttles emits to stay under this. */
+  const LIVE_LOC_THROTTLE_MS = 850;
 
   socket.on('ride_live_location', async (data) => {
     try {
