@@ -448,6 +448,44 @@ router.put('/change-password', authenticateJWT, async (req, res) => {
   }
 });
 
+// Change email (requires current password; same uniqueness as signup per userType)
+router.put('/change-email', authenticateJWT, async (req, res) => {
+  try {
+    const { currentPassword, newEmail } = req.body;
+
+    if (!currentPassword || !newEmail) {
+      return res.status(400).json({ error: 'Current password and new email are required' });
+    }
+
+    const emailNorm = normalizeSignupEmail(String(newEmail));
+    if (!isValidEmail(emailNorm)) {
+      return res.status(400).json({ error: 'Enter a valid email address' });
+    }
+
+    const isMatch = await req.user.comparePassword(currentPassword);
+    if (!isMatch) {
+      return res.status(400).json({ error: 'Current password is incorrect' });
+    }
+
+    const ut = String(req.user.userType || '').toLowerCase();
+    const existing = await User.findOne({ email: emailNorm, userType: ut });
+    if (existing && String(existing._id) !== String(req.user._id)) {
+      return res.status(400).json({ error: 'An account with this email already exists' });
+    }
+
+    req.user.email = emailNorm;
+    await req.user.save();
+
+    res.json({
+      message: 'Email updated successfully',
+      user: req.user.getPublicProfile(),
+    });
+  } catch (error) {
+    console.error('Email change error:', error);
+    res.status(500).json({ error: 'Email change failed' });
+  }
+});
+
 // Forgot password — send 6-digit code to email (body: { email, userType: "rider"|"driver" })
 router.post('/forgot-password', async (req, res) => {
   try {
