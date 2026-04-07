@@ -168,6 +168,160 @@ app.use('/api', serviceZonesRoutes);
 app.use('/api', appUpdatesRoutes);
 app.use('/api', notificationCenterRoutes);
 
+// Public legal pages (Play Store requires a publicly accessible privacy policy URL)
+app.get('/privacy-policy', (req, res) => {
+  res.type('html').send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>GB Rides – Privacy Policy</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0f172a;color:#e2e8f0;line-height:1.7;padding:24px 16px}
+    .wrap{max-width:720px;margin:0 auto}
+    h1{font-size:1.8rem;margin-bottom:8px;color:#fff}
+    .updated{font-size:.85rem;color:#94a3b8;margin-bottom:24px}
+    h2{font-size:1.15rem;margin-top:24px;margin-bottom:8px;color:#38bdf8}
+    p,ul{margin-bottom:12px;font-size:.95rem;color:#cbd5e1}
+    ul{padding-left:20px}
+    li{margin-bottom:4px}
+    a{color:#38bdf8}
+    .footer{margin-top:40px;padding-top:16px;border-top:1px solid #1e293b;font-size:.8rem;color:#64748b}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Privacy Policy</h1>
+  <p class="updated">Last updated: April 2026</p>
+
+  <p>GB Rides ("we", "us", "our") operates the GB Rides mobile application. This page informs you of our policies regarding the collection, use, and disclosure of personal data when you use our app.</p>
+
+  <h2>1. Information We Collect</h2>
+  <ul>
+    <li><strong>Account information</strong> – name, email address, phone number, profile photo.</li>
+    <li><strong>Trip data</strong> – pickup &amp; drop-off locations, timestamps, fare amount, driver/rider identifiers.</li>
+    <li><strong>Location data</strong> – real-time GPS coordinates during an active trip for routing, navigation, and safety.</li>
+    <li><strong>Audio</strong> – microphone access is used only for in-app voice calls between rider and driver. We do not record or store call audio.</li>
+    <li><strong>Device &amp; diagnostics</strong> – crash logs, app version, OS version to improve reliability.</li>
+  </ul>
+
+  <h2>2. How We Use Your Data</h2>
+  <ul>
+    <li>Provide ride booking, real-time tracking, and trip history.</li>
+    <li>Connect riders with nearby drivers.</li>
+    <li>Calculate and process fares.</li>
+    <li>Prevent fraud and improve safety.</li>
+    <li>Provide customer support and resolve disputes.</li>
+    <li>Comply with legal obligations where required.</li>
+  </ul>
+
+  <h2>3. Data Sharing</h2>
+  <p>During a ride, the rider and driver can see each other's name, phone number, vehicle details, and live location. We do <strong>not</strong> sell personal data to third parties.</p>
+  <p>We may share data with:</p>
+  <ul>
+    <li>Payment processors (for fare transactions).</li>
+    <li>Law enforcement (when legally required).</li>
+    <li>Cloud infrastructure providers (hosting, databases) under strict data-processing agreements.</li>
+  </ul>
+
+  <h2>4. Data Retention</h2>
+  <p>We keep account and trip data for as long as your account is active. Location data from completed trips is retained for safety and support purposes for up to 90 days. You may request earlier deletion by contacting support.</p>
+
+  <h2>5. Your Rights</h2>
+  <ul>
+    <li>Update or correct your profile information from within the app.</li>
+    <li>Request a copy of your personal data.</li>
+    <li>Request account deletion by contacting support (subject to legal retention requirements).</li>
+  </ul>
+
+  <h2>6. Children's Privacy</h2>
+  <p>GB Rides is not intended for users under the age of 18. We do not knowingly collect data from children.</p>
+
+  <h2>7. Security</h2>
+  <p>We use HTTPS encryption, hashed passwords, and JWT-based authentication to protect your data. While no method is 100% secure, we take reasonable precautions.</p>
+
+  <h2>8. Changes to This Policy</h2>
+  <p>We may update this policy from time to time. Changes will be posted on this page with an updated revision date.</p>
+
+  <h2>9. Contact</h2>
+  <p>If you have questions about this policy, please contact us at <a href="mailto:support@mesumabbas.online">support@mesumabbas.online</a>.</p>
+
+  <div class="footer">
+    &copy; ${new Date().getFullYear()} GB Rides – Gilgit-Baltistan, Pakistan
+  </div>
+</div>
+</body>
+</html>`);
+});
+
+app.get('/terms-of-service', (req, res) => {
+  res.type('html').send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>GB Rides – Terms of Service</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0f172a;color:#e2e8f0;line-height:1.7;padding:24px 16px}
+    .wrap{max-width:720px;margin:0 auto}
+    h1{font-size:1.8rem;margin-bottom:8px;color:#fff}
+    .updated{font-size:.85rem;color:#94a3b8;margin-bottom:24px}
+    h2{font-size:1.15rem;margin-top:24px;margin-bottom:8px;color:#38bdf8}
+    p,ul{margin-bottom:12px;font-size:.95rem;color:#cbd5e1}
+    ul{padding-left:20px}
+    li{margin-bottom:4px}
+    a{color:#38bdf8}
+    .footer{margin-top:40px;padding-top:16px;border-top:1px solid #1e293b;font-size:.8rem;color:#64748b}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Terms of Service</h1>
+  <p class="updated">Last updated: April 2026</p>
+
+  <p>By using GB Rides you agree to these terms. If you do not agree, do not use the app.</p>
+
+  <h2>1. Eligibility</h2>
+  <p>You must be at least 18 years old and legally able to enter contracts in Pakistan.</p>
+
+  <h2>2. Account</h2>
+  <p>You are responsible for keeping your credentials secure. One account per person.</p>
+
+  <h2>3. Rides &amp; Fares</h2>
+  <p>Riders and drivers negotiate fares through the app. GB Rides may charge a service commission. All fares are in Pakistani Rupees (PKR).</p>
+
+  <h2>4. Cancellations</h2>
+  <p>Repeated no-show cancellations by drivers may result in temporary penalties or account suspension as described in our driver policies.</p>
+
+  <h2>5. Prohibited Conduct</h2>
+  <ul>
+    <li>Harassment, threats, or discrimination toward any user.</li>
+    <li>Impersonation or providing false information.</li>
+    <li>Using the app for any illegal purpose.</li>
+  </ul>
+
+  <h2>6. Liability</h2>
+  <p>GB Rides connects riders with independent drivers. We are not a transportation provider and are not liable for incidents during rides beyond what the law requires.</p>
+
+  <h2>7. Termination</h2>
+  <p>We may suspend or terminate accounts that violate these terms.</p>
+
+  <h2>8. Changes</h2>
+  <p>We may update these terms. Continued use after changes constitutes acceptance.</p>
+
+  <h2>9. Contact</h2>
+  <p>Questions? <a href="mailto:support@mesumabbas.online">support@mesumabbas.online</a></p>
+
+  <div class="footer">
+    &copy; ${new Date().getFullYear()} GB Rides – Gilgit-Baltistan, Pakistan
+  </div>
+</div>
+</body>
+</html>`);
+});
+
 // Health check endpoint (mongo readyState: 0=disconnected 1=connected 2=connecting 3=disconnecting)
 app.get('/api/health', (req, res) => {
   const mongoOk = mongoose.connection.readyState === 1;
