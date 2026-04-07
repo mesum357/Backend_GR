@@ -245,7 +245,7 @@ app.get('/privacy-policy', (req, res) => {
   <p>We may update this policy from time to time. Changes will be posted on this page with an updated revision date.</p>
 
   <h2>9. Contact</h2>
-  <p>If you have questions about this policy, please contact us at <a href="mailto:support@mesumabbas.online">support@mesumabbas.online</a>.</p>
+  <p>If you have questions about this policy, please contact us at <a href="mailto:i.mesumabbas@gmail.com">i.mesumabbas@gmail.com</a>.</p>
 
   <div class="footer">
     &copy; ${new Date().getFullYear()} GB Rides – Gilgit-Baltistan, Pakistan
@@ -312,7 +312,7 @@ app.get('/terms-of-service', (req, res) => {
   <p>We may update these terms. Continued use after changes constitutes acceptance.</p>
 
   <h2>9. Contact</h2>
-  <p>Questions? <a href="mailto:support@mesumabbas.online">support@mesumabbas.online</a></p>
+  <p>Questions? <a href="mailto:i.mesumabbas@gmail.com">i.mesumabbas@gmail.com</a></p>
 
   <div class="footer">
     &copy; ${new Date().getFullYear()} GB Rides – Gilgit-Baltistan, Pakistan
