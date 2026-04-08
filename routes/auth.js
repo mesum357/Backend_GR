@@ -19,6 +19,30 @@ const { revokeStaleUserSockets } = require('../lib/revokeStaleUserSockets');
 const { authenticateLocal, authenticateJWT, generateToken } = require('../middleware/auth');
 const router = express.Router();
 
+/**
+ * Same user re-authenticating with a still-valid JWT (matching authSessionVersion) should not bump the
+ * session — otherwise revokeStaleUserSockets can fire on a stale WebSocket from the same device.
+ */
+function shouldSkipSessionBumpForRelogin(req, user) {
+  const authHeader = req.headers?.authorization;
+  if (!authHeader || typeof authHeader !== 'string' || !authHeader.startsWith('Bearer ')) {
+    return false;
+  }
+  const tok = authHeader.slice(7).trim();
+  if (!tok) return false;
+  try {
+    const payload = jwt.verify(tok, process.env.JWT_SECRET || 'your-jwt-secret');
+    if (String(payload.id) !== String(user._id)) return false;
+    const dbSv = Number(user.authSessionVersion);
+    const tokenSv = Number(payload.sv);
+    const dbSessionVersion = Number.isFinite(dbSv) ? dbSv : 0;
+    const jwtSessionVersion = Number.isFinite(tokenSv) ? tokenSv : 0;
+    return jwtSessionVersion === dbSessionVersion;
+  } catch {
+    return false;
+  }
+}
+
 function smtpErrorMessage(err) {
   if (!err) return 'Could not send email. Try again later.';
   const m = err.message || err.response || String(err);
@@ -347,9 +371,17 @@ router.post('/login', authenticateLocal, async (req, res) => {
       }
     }
 
-    const freshUser = await bumpAuthSessionReturnUser(user._id);
+    const skipBump = shouldSkipSessionBumpForRelogin(req, user);
+    const freshUser = skipBump
+      ? await User.findById(user._id)
+      : await bumpAuthSessionReturnUser(user._id);
+    if (!freshUser) {
+      return res.status(500).json({ error: 'Authentication error' });
+    }
     const io = req.app.get('io');
-    revokeStaleUserSockets(io, freshUser._id, Number(freshUser.authSessionVersion) || 0);
+    if (!skipBump) {
+      revokeStaleUserSockets(io, freshUser._id, Number(freshUser.authSessionVersion) || 0);
+    }
     const token = generateToken(freshUser);
 
     return res.json({
