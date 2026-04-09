@@ -85,9 +85,6 @@ router.post('/cash-in', authenticateJWT, async (req, res) => {
     if (amount > 50000) {
       return res.status(400).json({ message: 'Maximum cash in amount is 50,000 PKR' });
     }
-    if (!transactionId || !String(transactionId).trim()) {
-      return res.status(400).json({ message: 'Transaction ID is required' });
-    }
     if (!senderName || !String(senderName).trim()) {
       return res.status(400).json({ message: 'Sender name is required' });
     }
@@ -100,23 +97,28 @@ router.post('/cash-in', authenticateJWT, async (req, res) => {
       return res.status(404).json({ message: 'Driver profile not found' });
     }
 
-    // Check if transaction ID already exists
-    const existingTransaction = await DriverWalletTransaction.findOne({
-      'paymentDetails.transactionId': String(transactionId).trim(),
-      transactionType: 'cash_in'
-    });
-    if (existingTransaction) {
-      return res.status(400).json({ message: 'Transaction ID already used' });
+    const txnIdTrimmed = String(transactionId || '').trim();
+    // Check duplicate transaction ID only when provided.
+    if (txnIdTrimmed) {
+      const existingTransaction = await DriverWalletTransaction.findOne({
+        'paymentDetails.transactionId': txnIdTrimmed,
+        transactionType: 'cash_in'
+      });
+      if (existingTransaction) {
+        return res.status(400).json({ message: 'Transaction ID already used' });
+      }
     }
 
     const snap = await getCashInSnapshotForMethod(method);
     const paymentDetails = {
-      transactionId: String(transactionId).trim(),
       accountNumber: snap.accountNumber,
       accountHolder: snap.accountHolder,
       senderName: String(senderName).trim(),
       proofImage: String(screenshot).trim(),
     };
+    if (txnIdTrimmed) {
+      paymentDetails.transactionId = txnIdTrimmed;
+    }
     if (snap.reference) {
       paymentDetails.reference = snap.reference;
     }
@@ -140,7 +142,7 @@ router.post('/cash-in', authenticateJWT, async (req, res) => {
         id: transaction._id,
         amount: transaction.amount,
         status: transaction.status,
-        transactionId: transactionId,
+        transactionId: txnIdTrimmed || undefined,
         createdAt: transaction.createdAt
       }
     });
