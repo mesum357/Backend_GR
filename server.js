@@ -73,8 +73,10 @@ app.use((req, res, next) => {
   }
   next();
 });
-app.use(express.json({ limit: '8mb' }));
-app.use(express.urlencoded({ extended: true }));
+// Driver signup can include multiple base64 images (profile + vehicle + license + CNIC front/back).
+// Keep a practical ceiling to avoid 413 on valid submissions while still bounding abuse.
+app.use(express.json({ limit: '20mb' }));
+app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
 // Session configuration (only for web clients, not React Native)
 if (process.env.NODE_ENV !== 'react-native') {
@@ -330,6 +332,18 @@ app.get('/api/health', (req, res) => {
     message: mongoOk ? 'Server is running' : 'MongoDB not connected',
     mongo: { ready: mongoOk, readyState: mongoose.connection.readyState },
   });
+});
+
+// Payload-too-large should return JSON so mobile clients can show a clear message.
+app.use((err, req, res, next) => {
+  if (err?.type === 'entity.too.large') {
+    return res.status(413).json({
+      error: 'PAYLOAD_TOO_LARGE',
+      message:
+        'Uploaded images are too large. Please choose smaller/compressed photos and try again.',
+    });
+  }
+  return next(err);
 });
 
 // Error handling middleware

@@ -218,8 +218,8 @@ router.post('/register', async (req, res) => {
     });
 
     if (existingUser) {
-      return res.status(400).json({ 
-        error: 'User with this email or phone number already exists' 
+      return res.status(400).json({
+        error: 'User with this email or phone number already exists'
       });
     }
 
@@ -241,7 +241,7 @@ router.post('/register', async (req, res) => {
     if (userType === 'driver' && driverInfo) {
       try {
         const Driver = require('../models/Driver');
-        
+
         const driverData = {
           user: user._id,
           vehicleInfo: driverInfo.vehicleInfo,
@@ -292,30 +292,30 @@ router.post('/register', async (req, res) => {
 
   } catch (error) {
     console.error('Registration error:', error);
-    
+
     // Handle specific MongoDB errors
     if (error.code === 11000) {
       // Duplicate key error
       const field = Object.keys(error.keyPattern)[0];
-      const message = field === 'email' 
-        ? 'An account with this email already exists' 
+      const message = field === 'email'
+        ? 'An account with this email already exists'
         : field === 'phone'
-        ? 'An account with this phone number already exists'
-        : 'An account with this information already exists';
+          ? 'An account with this phone number already exists'
+          : 'An account with this information already exists';
       return res.status(400).json({ error: message });
     }
-    
+
     // Handle Mongoose validation errors
     if (error.name === 'ValidationError') {
       const messages = Object.values(error.errors).map(err => err.message);
       return res.status(400).json({ error: messages.join(', ') });
     }
-    
+
     // Handle other known errors
     if (error.name === 'CastError') {
       return res.status(400).json({ error: 'Invalid data format' });
     }
-    
+
     // Generic server error
     res.status(500).json({ error: 'Registration failed' });
   }
@@ -423,7 +423,7 @@ router.get('/profile', authenticateJWT, (req, res) => {
 router.put('/profile', authenticateJWT, async (req, res) => {
   try {
     const { firstName, lastName, phone, profileImage, preferences } = req.body;
-    
+
     const updates = {};
     if (firstName) updates.firstName = firstName;
     if (lastName) updates.lastName = lastName;

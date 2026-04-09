@@ -27,6 +27,7 @@
     "e2e:complete-ride": "node test-complete-ride-process-e2e.js",
     "e2e:dedupe-events": "node test-fixes-event-dedupe.js",
     "e2e:low-net-driver-requests": "node test-low-network-driver-requests.js",
+    "test:driver-signup-413": "node test-driver-signup-413-fix.js",
     "check-google-quota": "node scripts/check-google-api-quota.js"
   },
   "keywords": [
