@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { normalizeRideTypeKey } = require('../utils/rideFarePricing');
 
 const driverSchema = new mongoose.Schema({
   // Reference to User model
@@ -207,6 +208,17 @@ const driverOnlineFilter = {
   ],
 };
 
+function normalizeDriverRideType(driverDoc) {
+  const rawType = driverDoc?.vehicleInfo?.rideType || driverDoc?.vehicleInfo?.vehicleType || 'ride_mini';
+  return normalizeRideTypeKey(rawType);
+}
+
+function isRideTypeCompatible(driverDoc, requestedVehicleType) {
+  const requested = String(requestedVehicleType || '').trim().toLowerCase();
+  if (!requested || requested === 'any') return true;
+  return normalizeDriverRideType(driverDoc) === normalizeRideTypeKey(requestedVehicleType);
+}
+
 driverSchema.statics.findNearbyDriversByH3 = async function (
   latitude,
   longitude,
@@ -224,18 +236,23 @@ driverSchema.statics.findNearbyDriversByH3 = async function (
 };
 
 // Static method to find nearby available drivers
-driverSchema.statics.findNearbyDrivers = async function (latitude, longitude, maxDistance = 5) {
+driverSchema.statics.findNearbyDrivers = async function (
+  latitude,
+  longitude,
+  maxDistance = 5,
+  requestedVehicleType = 'any'
+) {
   if (process.env.USE_H3_DRIVER_MATCHING === 'true') {
     try {
       const h3Drivers = await this.findNearbyDriversByH3(latitude, longitude, 1);
       if (h3Drivers.length > 0) {
-        return h3Drivers;
+        return h3Drivers.filter((driver) => isRideTypeCompatible(driver, requestedVehicleType));
       }
     } catch (e) {
       console.warn('H3 driver matching failed, falling back to $near:', e?.message || e);
     }
   }
-  return await this.find({
+  const nearbyDrivers = await this.find({
     ...driverOnlineFilter,
     currentLocation: {
       $near: {
@@ -249,6 +266,7 @@ driverSchema.statics.findNearbyDrivers = async function (latitude, longitude, ma
   })
     .populate('user', 'firstName lastName phone rating')
     .limit(20);
+  return nearbyDrivers.filter((driver) => isRideTypeCompatible(driver, requestedVehicleType));
 };
 
 // Static method to create driver profile

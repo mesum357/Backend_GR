@@ -11,6 +11,7 @@ const { registerRiderCancellationForPenalty } = require('../lib/registerNoArriva
 const { getDriverMinimumWalletPkr } = require('../lib/walletSettings');
 const { deductDriverCommissionForRide } = require('../lib/driverCommission');
 const { ensureRideRoutePolylineSaved } = require('../services/ensureRideRoutePolyline');
+const { normalizeRideTypeKey } = require('../utils/rideFarePricing');
 
 /** Same delivery semantics as server.js emitToUser (user room + legacy socket id). */
 function emitToUserFromApp(req, userId, event, payload) {
@@ -69,6 +70,17 @@ function notifyRideCancellationRealtime(req, rideRequest, requestId, cancelledBy
     emitToUserFromApp(req, riderId, 'ride_request_cancelled', payloadDetailed);
     emitToUserFromApp(req, riderId, 'ride_cancelled', payload);
   }
+}
+
+function normalizeDriverRideType(driverDoc) {
+  const rawType = driverDoc?.vehicleInfo?.rideType || driverDoc?.vehicleInfo?.vehicleType || 'ride_mini';
+  return normalizeRideTypeKey(rawType);
+}
+
+function requestMatchesDriverRideType(requestVehicleType, driverRideType) {
+  const requested = String(requestVehicleType || '').trim().toLowerCase();
+  if (!requested || requested === 'any') return true;
+  return normalizeRideTypeKey(requestVehicleType) === normalizeRideTypeKey(driverRideType || 'ride_mini');
 }
 
 // Create a new ride request
@@ -256,7 +268,8 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
     const nearbyDrivers = await findDriversWithinRadius(
       pickup.latitude,
       pickup.longitude,
-      radiusKmFinal
+      radiusKmFinal,
+      vehicleType
     );
 
     // Get socket.io instance
@@ -373,10 +386,15 @@ function calculateHaversineDistance(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-async function findDriversWithinRadius(latitude, longitude, radiusKm) {
+async function findDriversWithinRadius(latitude, longitude, radiusKm, requestedVehicleType = 'any') {
   try {
     // Use the Driver model's static method for geospatial search
-    const nearbyDrivers = await Driver.findNearbyDrivers(latitude, longitude, radiusKm);
+    const nearbyDrivers = await Driver.findNearbyDrivers(
+      latitude,
+      longitude,
+      radiusKm,
+      requestedVehicleType
+    );
     console.log(`🔍 Found ${nearbyDrivers.length} nearby drivers within ${radiusKm}km`);
     return nearbyDrivers;
   } catch (error) {
@@ -481,6 +499,14 @@ router.get('/available-simple', authenticateJWT, async (req, res) => {
       return res.status(403).json({ error: 'Only drivers can view available requests' });
     }
 
+    const driverProfile = await Driver.findOne({ user: req.user._id })
+      .select('vehicleInfo.rideType vehicleInfo.vehicleType')
+      .lean();
+    if (!driverProfile) {
+      return res.status(404).json({ error: 'Driver profile not found' });
+    }
+    const driverRideType = normalizeDriverRideType(driverProfile);
+
     // Find all available ride requests that haven't expired
     const rideRequests = await RideRequest.find({
       status: { $in: ['searching', 'pending'] },
@@ -490,13 +516,17 @@ router.get('/available-simple', authenticateJWT, async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(20);
 
-    console.log('🔧 Found ride requests:', rideRequests.length);
-    rideRequests.forEach(request => {
+    const matchedRideRequests = rideRequests.filter((request) =>
+      requestMatchesDriverRideType(request.vehicleType, driverRideType)
+    );
+
+    console.log('🔧 Found ride requests:', matchedRideRequests.length);
+    matchedRideRequests.forEach(request => {
       console.log(`🔧 Request ${request._id}: PKR ${request.requestedPrice} (suggested: ${request.suggestedPrice}) - Status: ${request.status}`);
     });
 
     // Format response to match frontend interface
-    const formattedRequests = rideRequests.map(request => {
+    const formattedRequests = matchedRideRequests.map(request => {
       const rider = request.rider;
       const pickupLocation = request.pickupLocation;
       const destination = request.destination;
@@ -564,6 +594,14 @@ router.get('/available', authenticateJWT, async (req, res) => {
       return res.status(403).json({ error: 'Only drivers can view available requests' });
     }
 
+    const driverProfile = await Driver.findOne({ user: req.user._id })
+      .select('vehicleInfo.rideType vehicleInfo.vehicleType')
+      .lean();
+    if (!driverProfile) {
+      return res.status(404).json({ error: 'Driver profile not found' });
+    }
+    const driverRideType = normalizeDriverRideType(driverProfile);
+
     const { latitude, longitude, radius = 5 } = req.query;
 
     if (!latitude || !longitude) {
@@ -591,6 +629,9 @@ router.get('/available', authenticateJWT, async (req, res) => {
 
     // Calculate exact distances and filter
     const filteredRequests = rideRequests.filter(request => {
+      if (!requestMatchesDriverRideType(request.vehicleType, driverRideType)) {
+        return false;
+      }
       const distance = request.calculateDistance(
         parseFloat(latitude),
         parseFloat(longitude),

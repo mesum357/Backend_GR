@@ -154,7 +154,8 @@ rideRequestSchema.methods.findNearbyDrivers = async function(maxDistance = 5) {
   const drivers = await Driver.findNearbyDrivers(
     this.pickupLocation.latitude,
     this.pickupLocation.longitude,
-    maxDistance
+    maxDistance,
+    this.vehicleType
   );
 
   // Legacy shape expected by `routes/ride-requests.js` `/create` endpoint.
