@@ -83,6 +83,14 @@ function requestMatchesDriverRideType(requestVehicleType, driverRideType) {
   return normalizeRideTypeKey(requestVehicleType) === normalizeRideTypeKey(driverRideType || 'ride_mini');
 }
 
+async function resolveDriverRideTypeByUserId(driverUserId) {
+  const profile = await Driver.findOne({ user: driverUserId })
+    .select('vehicleInfo.rideType vehicleInfo.vehicleType')
+    .lean();
+  if (!profile) return null;
+  return normalizeDriverRideType(profile);
+}
+
 // Create a new ride request
 router.post('/create', authenticateJWT, async (req, res) => {
   try {
@@ -875,6 +883,15 @@ router.post('/:requestId/respond', authenticateJWT, async (req, res) => {
     const rideRequest = await RideRequest.findById(requestId);
     if (!rideRequest) {
       return res.status(404).json({ error: 'Ride request not found' });
+    }
+
+    // Hard guard: driver can only interact with ride requests matching their ride type.
+    const driverRideType = await resolveDriverRideTypeByUserId(req.user._id);
+    if (!driverRideType) {
+      return res.status(404).json({ error: 'Driver profile not found' });
+    }
+    if (!requestMatchesDriverRideType(rideRequest.vehicleType, driverRideType)) {
+      return res.status(403).json({ error: 'This ride request is not available for your vehicle type' });
     }
 
     if (!['searching', 'pending'].includes(rideRequest.status)) {
