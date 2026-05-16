@@ -228,13 +228,13 @@ app.get('/privacy-policy', (req, res) => {
   </ul>
 
   <h2>4. Data Retention</h2>
-  <p>We keep account and trip data for as long as your account is active. Location data from completed trips is retained for safety and support purposes for up to 90 days. You may request earlier deletion by contacting support.</p>
+  <p>We keep account and trip data for as long as your account is active. When you delete your account in the app, we remove your profile, trip history, support tickets, and related personal data from our systems. Some records may be retained where required by law (for example fraud prevention or tax).</p>
 
   <h2>5. Your Rights</h2>
   <ul>
     <li>Update or correct your profile information from within the app.</li>
-    <li>Request a copy of your personal data.</li>
-    <li>Request account deletion by contacting support (subject to legal retention requirements).</li>
+    <li>Request a copy of your personal data by contacting us.</li>
+    <li>Permanently delete your account from <strong>Profile → Delete account</strong> in the GB Rides app (password required). You cannot delete while a trip is in progress.</li>
   </ul>
 
   <h2>6. Children's Privacy</h2>

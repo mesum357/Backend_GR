@@ -17,6 +17,7 @@ const { validateSignupPassword } = require('../lib/signupPasswordPolicy');
 const { bumpAuthSessionReturnUser } = require('../lib/bumpAuthSession');
 const { revokeStaleUserSockets } = require('../lib/revokeStaleUserSockets');
 const { authenticateLocal, authenticateJWT, generateToken } = require('../middleware/auth');
+const { deleteUserAccount } = require('../lib/deleteUserAccount');
 const router = express.Router();
 
 /**
@@ -445,6 +446,34 @@ router.put('/profile', authenticateJWT, async (req, res) => {
   } catch (error) {
     console.error('Profile update error:', error);
     res.status(500).json({ error: 'Profile update failed' });
+  }
+});
+
+// Permanently delete the authenticated user's account (Google Play account-deletion requirement)
+router.delete('/account', authenticateJWT, async (req, res) => {
+  try {
+    const { password } = req.body || {};
+
+    if (!password || typeof password !== 'string') {
+      return res.status(400).json({ error: 'Your password is required to delete your account' });
+    }
+
+    const isMatch = await req.user.comparePassword(password);
+    if (!isMatch) {
+      return res.status(400).json({ error: 'Password is incorrect' });
+    }
+
+    await deleteUserAccount(req.user);
+
+    return res.json({
+      message: 'Your account and associated personal data have been permanently deleted.',
+    });
+  } catch (error) {
+    if (error.code === 'ACTIVE_TRIP') {
+      return res.status(409).json({ error: error.message, code: error.code });
+    }
+    console.error('Account deletion error:', error);
+    return res.status(500).json({ error: 'Account deletion failed. Please try again or contact support.' });
   }
 });
 
