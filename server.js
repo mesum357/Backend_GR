@@ -195,58 +195,59 @@ app.get('/privacy-policy', (req, res) => {
 <body>
 <div class="wrap">
   <h1>Privacy Policy</h1>
-  <p class="updated">Last updated: April 2026</p>
+  <p class="updated">Last updated: May 2026</p>
 
-  <p>GB Rides ("we", "us", "our") operates the GB Rides mobile application. This page informs you of our policies regarding the collection, use, and disclosure of personal data when you use our app.</p>
+  <p>GB Rides ("we", "us", "our") operates the GB Rides ride-booking mobile application for Gilgit and Gilgit-Baltistan. This policy explains what personal data we collect, how we use it, and the choices you have when you use our app as a rider or driver.</p>
 
   <h2>1. Information We Collect</h2>
   <ul>
-    <li><strong>Account information</strong> – name, email address, phone number, profile photo.</li>
-    <li><strong>Trip data</strong> – pickup &amp; drop-off locations, timestamps, fare amount, driver/rider identifiers.</li>
-    <li><strong>Location data</strong> – real-time GPS coordinates during an active trip for routing, navigation, and safety.</li>
-    <li><strong>Audio</strong> – microphone access is used only for in-app voice calls between rider and driver. We do not record or store call audio.</li>
-    <li><strong>Device &amp; diagnostics</strong> – crash logs, app version, OS version to improve reliability.</li>
+    <li><strong>Account information</strong> – name, email address, phone number, profile photo, and account type (rider or driver).</li>
+    <li><strong>Trip and booking data</strong> – pickup and drop-off locations, route details, timestamps, offered and accepted fares, transport mode, ride status, and rider/driver identifiers.</li>
+    <li><strong>Location data</strong> – GPS coordinates when you use the map, request a ride, receive driver offers, or take an active trip (for pickup accuracy, routing, navigation, and safety).</li>
+    <li><strong>Driver offers and messages</strong> – fare offers, ride chat messages, and related in-app communications during a booking.</li>
+    <li><strong>Notifications</strong> – device push tokens to send ride updates, driver offers, and important service alerts (you can manage notification permissions on your device).</li>
+    <li><strong>Audio</strong> – microphone access is used only for in-app voice calls between rider and driver during a trip. We do not record or store call audio.</li>
+    <li><strong>Device and diagnostics</strong> – app version, operating system, and technical logs to maintain reliability and fix issues.</li>
   </ul>
 
   <h2>2. How We Use Your Data</h2>
   <ul>
-    <li>Provide ride booking, real-time tracking, and trip history.</li>
-    <li>Connect riders with nearby drivers.</li>
-    <li>Calculate and process fares.</li>
-    <li>Prevent fraud and improve safety.</li>
-    <li>Provide customer support and resolve disputes.</li>
+    <li>Show your position on the map and help you select pickup and destination points.</li>
+    <li>Match riders with nearby drivers and deliver real-time fare offers.</li>
+    <li>Calculate suggested fares, process bookings, and provide live trip tracking.</li>
+    <li>Maintain trip history and support rebooking from past destinations.</li>
+    <li>Send notifications about offers, ride status, and account activity.</li>
+    <li>Provide customer support, improve safety, and prevent misuse of the service.</li>
     <li>Comply with legal obligations where required.</li>
   </ul>
 
   <h2>3. Data Sharing</h2>
-  <p>During a ride, the rider and driver can see each other's name, phone number, vehicle details, and live location. We do <strong>not</strong> sell personal data to third parties.</p>
-  <p>We may share data with:</p>
+  <p>During a ride, the rider and driver can see information needed to complete the trip (such as name, contact details, vehicle information, pickup/drop-off, and live location). We do <strong>not</strong> sell your personal data.</p>
+  <p>We may share limited data with:</p>
   <ul>
-    <li>Payment processors (for fare transactions).</li>
-    <li>Law enforcement (when legally required).</li>
-    <li>Cloud infrastructure providers (hosting, databases) under strict data-processing agreements.</li>
+    <li><strong>Map services</strong> (for example Google Maps) to display maps, geocoding, and directions.</li>
+    <li><strong>Cloud infrastructure providers</strong> that host our servers and databases under data-processing safeguards.</li>
+    <li><strong>Law enforcement or regulators</strong> when we are legally required to do so.</li>
   </ul>
 
-  <h2>4. Data Retention</h2>
-  <p>We keep account and trip data for as long as your account is active. When you delete your account in the app, we remove your profile, trip history, support tickets, and related personal data from our systems. Some records may be retained where required by law (for example fraud prevention or tax).</p>
-
-  <h2>5. Your Rights</h2>
+  <h2>4. Your Rights and Account Deletion</h2>
   <ul>
-    <li>Update or correct your profile information from within the app.</li>
-    <li>Request a copy of your personal data by contacting us.</li>
-    <li>Permanently delete your account from <strong>Profile → Delete account</strong> in the GB Rides app (password required). You cannot delete while a trip is in progress.</li>
+    <li>Update or correct certain profile details from within the app.</li>
+    <li>Permanently delete your account from <strong>Profile → Delete account</strong> in the GB Rides app (your password is required). You cannot delete your account while a trip is in progress.</li>
+    <li><strong>After you delete your account, all data associated with your account is permanently removed from our systems.</strong> This includes your profile, trip and ride-request history, ride chat messages, support tickets, driver profile and wallet records (if you are a driver), verification codes linked to your email or phone, and other personal data tied to your account.</li>
+    <li>Contact us at <a href="mailto:i.mesumabbas@gmail.com">i.mesumabbas@gmail.com</a> if you have questions about your data or need help with account deletion.</li>
   </ul>
 
-  <h2>6. Children's Privacy</h2>
+  <h2>5. Children's Privacy</h2>
   <p>GB Rides is not intended for users under the age of 18. We do not knowingly collect data from children.</p>
 
-  <h2>7. Security</h2>
-  <p>We use HTTPS encryption, hashed passwords, and JWT-based authentication to protect your data. While no method is 100% secure, we take reasonable precautions.</p>
+  <h2>6. Security</h2>
+  <p>We use HTTPS encryption, hashed passwords, and secure authentication to protect your data. While no method is 100% secure, we take reasonable precautions to safeguard your information.</p>
 
-  <h2>8. Changes to This Policy</h2>
+  <h2>7. Changes to This Policy</h2>
   <p>We may update this policy from time to time. Changes will be posted on this page with an updated revision date.</p>
 
-  <h2>9. Contact</h2>
+  <h2>8. Contact</h2>
   <p>If you have questions about this policy, please contact us at <a href="mailto:i.mesumabbas@gmail.com">i.mesumabbas@gmail.com</a>.</p>
 
   <div class="footer">
