@@ -258,6 +258,69 @@ app.get('/privacy-policy', (req, res) => {
 </html>`);
 });
 
+// Play Store: public account-deletion instructions (Data safety → Delete account URL)
+app.get('/delete-account', (req, res) => {
+  res.type('html').send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>GB Rides – Delete Your Account</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0f172a;color:#e2e8f0;line-height:1.7;padding:24px 16px}
+    .wrap{max-width:720px;margin:0 auto}
+    h1{font-size:1.8rem;margin-bottom:8px;color:#fff}
+    .updated{font-size:.85rem;color:#94a3b8;margin-bottom:24px}
+    h2{font-size:1.15rem;margin-top:24px;margin-bottom:8px;color:#38bdf8}
+    p,ul,ol{margin-bottom:12px;font-size:.95rem;color:#cbd5e1}
+    ul,ol{padding-left:20px}
+    li{margin-bottom:6px}
+    a{color:#38bdf8}
+    .footer{margin-top:40px;padding-top:16px;border-top:1px solid #1e293b;font-size:.8rem;color:#64748b}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>GB Rides – Delete your account</h1>
+  <p class="updated">Last updated: May 2026</p>
+
+  <p>You can permanently delete your <strong>GB Rides</strong> account and remove associated personal data from our systems using the steps below.</p>
+
+  <h2>Delete your account in the app (recommended)</h2>
+  <ol>
+    <li>Open the <strong>GB Rides</strong> app and sign in.</li>
+    <li>Go to <strong>Profile</strong> (menu or profile icon).</li>
+    <li>Tap <strong>Delete account</strong>.</li>
+    <li>Enter your <strong>password</strong> and confirm deletion.</li>
+  </ol>
+  <p>You cannot delete your account while a trip is in progress. Finish or cancel the trip first, then try again.</p>
+
+  <h2>What data is deleted</h2>
+  <p>After you delete your account, <strong>all data associated with your account is permanently removed</strong> from our systems, including:</p>
+  <ul>
+    <li>Your profile (name, email, phone, profile photo)</li>
+    <li>Trip and ride-request history</li>
+    <li>Ride chat messages</li>
+    <li>Support tickets and messages linked to your account</li>
+    <li>Driver profile and wallet records (if you registered as a driver)</li>
+    <li>Email and phone verification codes linked to your account</li>
+    <li>Other personal data tied to your GB Rides account</li>
+  </ul>
+
+  <h2>Request help by email</h2>
+  <p>If you cannot access the app, email <a href="mailto:i.mesumabbas@gmail.com">i.mesumabbas@gmail.com</a> from the address on your account. Include your name and phone number so we can verify your request and complete deletion.</p>
+
+  <p>See also our <a href="/privacy-policy">Privacy Policy</a>.</p>
+
+  <div class="footer">
+    &copy; ${new Date().getFullYear()} GB Rides – Gilgit-Baltistan, Pakistan
+  </div>
+</div>
+</body>
+</html>`);
+});
+
 app.get('/terms-of-service', (req, res) => {
   res.type('html').send(`<!DOCTYPE html>
 <html lang="en">
