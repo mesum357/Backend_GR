@@ -54,6 +54,19 @@ const rideRequestSchema = new mongoose.Schema({
   riderArrivedAt: {
     type: Date,
   },
+  /** Driver tapped start — used for live/elapsed trip duration. */
+  startedAt: {
+    type: Date,
+  },
+  /** Rider or driver completed the trip. */
+  completedAt: {
+    type: Date,
+  },
+  /** Wall-clock seconds from startedAt to completedAt. */
+  actualDurationSeconds: {
+    type: Number,
+    default: null,
+  },
   
   // Driver who accepted (if any)
   acceptedBy: {

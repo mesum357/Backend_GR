@@ -1,14 +1,19 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const { authenticateAdminJWT } = require('../middleware/admin-auth');
+const { getJwtSecret, isProductionLike } = require('../lib/runtimeSecrets');
 
 const router = express.Router();
 
 router.post('/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body || {};
-    const adminEmail = process.env.ADMIN_EMAIL || 'admin@gbrides.pk';
-    const adminPassword = process.env.ADMIN_PASSWORD || 'admin12345';
+    const adminEmail = process.env.ADMIN_EMAIL || (isProductionLike() ? '' : 'admin@gbrides.pk');
+    const adminPassword = process.env.ADMIN_PASSWORD || (isProductionLike() ? '' : 'admin12345');
+
+    if (!adminEmail || !adminPassword) {
+      return res.status(503).json({ error: 'Admin login is not configured on this server' });
+    }
 
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required' });
@@ -20,7 +25,7 @@ router.post('/auth/login', async (req, res) => {
 
     const token = jwt.sign(
       { role: 'admin', email: String(adminEmail).toLowerCase().trim() },
-      process.env.JWT_SECRET || 'your-jwt-secret',
+      getJwtSecret(),
       { expiresIn: '7d' }
     );
 

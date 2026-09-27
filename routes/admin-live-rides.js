@@ -2,6 +2,7 @@ const express = require('express');
 const { authenticateAdminJWT } = require('../middleware/admin-auth');
 const RideRequest = require('../models/RideRequest');
 const RideChatMessage = require('../models/RideChatMessage');
+const { expireStaleRideRequests } = require('../lib/expireStaleRideRequests');
 
 const router = express.Router();
 
@@ -29,6 +30,8 @@ function statusQueryForGroup(group) {
 
 router.get('/live-rides', authenticateAdminJWT, async (req, res) => {
   try {
+    await expireStaleRideRequests({ io: req.app.get('io') });
+
     const group = normalizeStatusGroup(req.query.status);
     const q = statusQueryForGroup(group);
 

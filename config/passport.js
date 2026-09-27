@@ -31,7 +31,13 @@ passport.use(new LocalStrategy({
 // JWT Strategy for token-based authentication
 const jwtOptions = {
   jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
-  secretOrKey: process.env.JWT_SECRET || 'your-jwt-secret'
+  secretOrKey: (() => {
+    try {
+      return require('../lib/runtimeSecrets').getJwtSecret();
+    } catch {
+      return process.env.JWT_SECRET || 'your-jwt-secret';
+    }
+  })()
 };
 
 passport.use(new JwtStrategy(jwtOptions, async (payload, done) => {

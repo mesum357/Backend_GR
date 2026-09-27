@@ -9,6 +9,7 @@ const Driver = require('../models/Driver');
 const { getDriverMinimumWalletPkr } = require('../lib/walletSettings');
 const { deductDriverCommissionForRide } = require('../lib/driverCommission');
 const { normalizeRideTypeKey } = require('../utils/rideFarePricing');
+const { durationMinutesForRideDoc } = require('../lib/rideDuration');
 
 /** ObjectId hex string; works for ObjectId, populated doc, or { _id } */
 function idString(ref) {
@@ -349,7 +350,7 @@ router.post('/:rideId/rate', authenticateJWT, async (req, res) => {
         };
 
         const distanceKm = rideRequest.distance || 0;
-        const durationMin = rideRequest.estimatedDuration || 0;
+        const durationMin = durationMinutesForRideDoc(rideRequest);
         const amount = rideRequest.requestedPrice || rideRequest.suggestedPrice || 0;
 
         ride = new Ride({

@@ -18,6 +18,7 @@ const { bumpAuthSessionReturnUser } = require('../lib/bumpAuthSession');
 const { revokeStaleUserSockets } = require('../lib/revokeStaleUserSockets');
 const { authenticateLocal, authenticateJWT, generateToken } = require('../middleware/auth');
 const { deleteUserAccount } = require('../lib/deleteUserAccount');
+const { normalizeRideTypeKey, driverVehicleTypeEnum } = require('../utils/rideFarePricing');
 const router = express.Router();
 
 /**
@@ -243,9 +244,17 @@ router.post('/register', async (req, res) => {
       try {
         const Driver = require('../models/Driver');
 
+        const incomingVehicle = driverInfo.vehicleInfo || {};
+        const canonicalRideType = normalizeRideTypeKey(
+          incomingVehicle.rideType || incomingVehicle.vehicleType
+        );
         const driverData = {
           user: user._id,
-          vehicleInfo: driverInfo.vehicleInfo,
+          vehicleInfo: {
+            ...incomingVehicle,
+            rideType: canonicalRideType,
+            vehicleType: driverVehicleTypeEnum(incomingVehicle.rideType || incomingVehicle.vehicleType),
+          },
           licenseNumber: driverInfo.licenseNumber,
           licenseImage: driverInfo.licenseImage || null,
           cnicFrontImage: driverInfo.cnicFrontImage || null,

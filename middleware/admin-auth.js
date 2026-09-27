@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const { getJwtSecret } = require('../lib/runtimeSecrets');
 
 /**
  * Admin-only authentication for the Admin panel.
@@ -14,7 +15,7 @@ const authenticateAdminJWT = (req, res, next) => {
     const token = authHeader.slice('Bearer '.length).trim();
     if (!token) return res.status(401).json({ error: 'Unauthorized - Missing token' });
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-jwt-secret');
+    const decoded = jwt.verify(token, getJwtSecret());
     if (!decoded || decoded.role !== 'admin') {
       return res.status(403).json({ error: 'Forbidden - Admin access required' });
     }
@@ -27,4 +28,3 @@ const authenticateAdminJWT = (req, res, next) => {
 };
 
 module.exports = { authenticateAdminJWT };
-

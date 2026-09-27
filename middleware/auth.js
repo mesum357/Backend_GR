@@ -1,5 +1,6 @@
 const passport = require('passport');
 const jwt = require('jsonwebtoken');
+const { getJwtSecret } = require('../lib/runtimeSecrets');
 
 // Middleware to authenticate JWT token
 const authenticateJWT = (req, res, next) => {
@@ -86,7 +87,7 @@ const generateToken = (user) => {
       userType: user.userType,
       sv: sessionVersion,
     },
-    process.env.JWT_SECRET || 'your-jwt-secret',
+    getJwtSecret(),
     { expiresIn: '7d' }
   );
 };

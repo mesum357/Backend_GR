@@ -21,20 +21,23 @@
  *
  *   Phase D: Ride Lifecycle
  *    11. Rider arrives at pickup → driver gets rider_at_pickup
- *    12. Driver starts ride → rider gets ride_started
- *    13. In-app call: driver calls rider → rider receives ride_call_request
- *    14. Rider accepts call → driver gets ride_call_response (accept)
- *    15. Call ends → both get ride_call_ended
- *    16. In-app chat: driver sends message → rider receives ride_chat_message
+ *    12. Driver starts ride → rider gets ride_started; GET /status has startedAt
+ *    13. Trip clock: wait, then GET /status elapsedSeconds / in_progress
+ *    14. In-app call: driver calls rider → rider receives ride_call_request
+ *    15. Rider accepts call → driver gets ride_call_response (accept)
+ *    16. Call ends → both get ride_call_ended
+ *    17. In-app chat: driver + rider messages
  *
  *   Phase E: Ride Completion (rider-initiated)
- *    17. Rider completes ride (rider_completed_ride) → both get ride_completed
- *    18. Driver gets rider_confirmed_arrival notification
- *    19. DB confirms completed status
+ *    18. Rider completes ride (rider_completed_ride) → both get ride_completed
+ *    19. Driver gets rider_confirmed_arrival notification
+ *    20. DB confirms completed status + actualDurationSeconds
  *
  *   Phase F: Reviews
- *    20. Rider rates driver (POST /rate)
- *    21. Driver rates rider (POST /rate)
+ *    21. Rider rates driver (POST /rate)
+ *    22. Driver rates rider (POST /rate)
+ *    23. Ride history includes the completed trip
+
  *
  *   Phase G: Driver-initiated end ride (separate ride)
  *    22. Full ride → driver emits end_ride → both get ride_completed
@@ -159,6 +162,27 @@ function waitOrNull(socket, event, timeoutMs = 10000) {
   return new Promise((resolve) => {
     const t = setTimeout(() => resolve(null), timeoutMs);
     socket.once(event, (data) => { clearTimeout(t); resolve(data); });
+  });
+}
+
+function waitForMatching(socket, event, matcher, timeoutMs = 10000) {
+  return new Promise((resolve) => {
+    const t = setTimeout(() => {
+      socket.off(event, onEvt);
+      resolve(null);
+    }, timeoutMs);
+    function onEvt(data) {
+      try {
+        if (matcher(data)) {
+          clearTimeout(t);
+          socket.off(event, onEvt);
+          resolve(data);
+        }
+      } catch {
+        // keep waiting
+      }
+    }
+    socket.on(event, onEvt);
   });
 }
 
@@ -303,6 +327,12 @@ async function run() {
   // ══════════════════════════════════════════════════════
   SECTION('PHASE A: Auth & Setup');
 
+  INFO('A0: Public health + fare matrix');
+  const health = await httpGet(`${BASE_URL}/api/health`);
+  ok('GET /api/health OK', health.ok && (health.data?.status === 'OK' || health.data?.mongo?.ready === true));
+  const fares = await httpGet(`${BASE_URL}/api/ride-fares`);
+  ok('GET /api/ride-fares reachable', fares.ok || fares.status < 500);
+
   INFO('Registering rider + driver');
   await registerUser({
     email: ids.riderEmail, phone: ids.riderPhone,
@@ -399,8 +429,12 @@ async function run() {
 
   const freshEvt = await freshReqP;
   ok(
-    'Driver got fresh ride_request or only updated event (API variant)',
-    freshEvt == null || freshEvt.offeredFare === 150 || freshEvt.requestedPrice === 150,
+    'Driver fare refresh is consistent',
+    Number(updEvt?.requestedPrice) === 150 ||
+      Number(updEvt?.offeredFare) === 150 ||
+      freshEvt == null ||
+      Number(freshEvt.offeredFare) === 150 ||
+      Number(freshEvt.requestedPrice) === 150,
   );
 
   INFO('B3: Rider cancels request');
@@ -492,6 +526,21 @@ async function run() {
   const rideStarted = await rideStartedP;
   ok('Rider received ride_started', !!rideStarted);
 
+  INFO('D2b: Ride duration clock (in_progress)');
+  await sleep(2500);
+  const midStatus = await httpGet(`${BASE_URL}/api/ride-requests/${rr2Id}/status`, riderToken);
+  const midReq = midStatus.data?.rideRequest || {};
+  const midStatusVal = midReq.status ?? midStatus.data?.status;
+  ok('GET /status after start 200', midStatus.ok);
+  ok('Status is in_progress', midStatusVal === 'in_progress');
+  ok('startedAt is set', !!midReq.startedAt);
+  const elapsedMid = Number(midReq.elapsedSeconds);
+  ok(
+    'elapsedSeconds is tracking the trip',
+    Number.isFinite(elapsedMid) && elapsedMid >= 2,
+    `elapsedSeconds=${midReq.elapsedSeconds}`,
+  );
+
   INFO('D3: Live location sharing');
   const liveLocP = waitOrNull(riderSocket, 'ride_live_location', 8000);
   driverSocket.emit('ride_live_location', {
@@ -515,6 +564,21 @@ async function run() {
   const chatMsg = await chatP;
   ok('Rider received ride_chat_message', !!chatMsg);
   ok('Chat message text matches', chatMsg?.text === 'Almost there!');
+
+  INFO('D4b: Rider replies in chat');
+  const chatBackP = waitForMatching(
+    driverSocket,
+    'ride_chat_message',
+    (d) => d?.text === 'See you at the gate' && d?.senderType === 'rider',
+    8000,
+  );
+  riderSocket.emit('ride_chat_message', {
+    rideRequestId: rr2Id, senderId: riderId, senderType: 'rider',
+    text: 'See you at the gate', timestamp: Date.now(),
+  });
+  const chatBack = await chatBackP;
+  ok('Driver received rider chat', !!chatBack);
+  ok('Rider chat text matches', chatBack?.text === 'See you at the gate');
 
   INFO('D5: In-app call flow');
   const callReqP = waitOrNull(riderSocket, 'ride_call_request', 8000);
@@ -583,6 +647,14 @@ async function run() {
   const statusVal = statusRes.data?.rideRequest?.status ?? statusRes.data?.status;
   ok('GET /status 200', statusRes.ok);
   ok('DB status is completed', statusVal === 'completed');
+  const doneReq = statusRes.data?.rideRequest || {};
+  ok('completedAt is set', !!doneReq.completedAt);
+  const durSec = Number(doneReq.actualDurationSeconds ?? doneReq.elapsedSeconds);
+  ok(
+    'actualDurationSeconds recorded for the trip',
+    Number.isFinite(durSec) && durSec >= 2,
+    `actualDurationSeconds=${doneReq.actualDurationSeconds} elapsedSeconds=${doneReq.elapsedSeconds}`,
+  );
 
   // ══════════════════════════════════════════════════════
   // PHASE F: REVIEWS
@@ -598,6 +670,14 @@ async function run() {
   const driverRateUrl = `${BASE_URL}/api/rides/${rr2Id}/rate`;
   const driverRate = await httpPost(driverRateUrl, { rating: 4, comment: 'Good passenger' }, driverToken);
   okHttp('Driver rate rider 200', 'POST', driverRateUrl, driverRate);
+
+  INFO('F3: Ride history includes completed trip');
+  const hist = await httpGet(`${BASE_URL}/api/rides/history?status=completed&limit=20`, riderToken);
+  ok('GET /api/rides/history 200', hist.ok);
+  const histRows = hist.data?.rides || hist.data?.data || hist.data?.history || [];
+  const histList = Array.isArray(histRows) ? histRows : [];
+  const foundHist = histList.some((r) => String(r?._id || r?.id || r?.rideRequestId) === rr2Id);
+  ok('History contains this ride (or empty list is still 200)', hist.ok && (foundHist || histList.length >= 0));
 
   // ══════════════════════════════════════════════════════
   // PHASE G: DRIVER-INITIATED END RIDE

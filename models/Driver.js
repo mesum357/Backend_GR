@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const { normalizeRideTypeKey } = require('../utils/rideFarePricing');
+const { normalizeRideTypeKey, rideTypesMatch } = require('../utils/rideFarePricing');
 
 const driverSchema = new mongoose.Schema({
   // Reference to User model
@@ -214,9 +214,7 @@ function normalizeDriverRideType(driverDoc) {
 }
 
 function isRideTypeCompatible(driverDoc, requestedVehicleType) {
-  const requested = String(requestedVehicleType || '').trim().toLowerCase();
-  if (!requested || requested === 'any') return true;
-  return normalizeDriverRideType(driverDoc) === normalizeRideTypeKey(requestedVehicleType);
+  return rideTypesMatch(requestedVehicleType, normalizeDriverRideType(driverDoc));
 }
 
 driverSchema.statics.findNearbyDriversByH3 = async function (

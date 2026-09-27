@@ -3,7 +3,72 @@ const router = express.Router();
 const mongoose = require('mongoose');
 const Driver = require('../models/Driver');
 const User = require('../models/User');
+const RideRequest = require('../models/RideRequest');
 const { authenticateJWT } = require('../middleware/auth');
+const { elapsedSecondsNow } = require('../lib/rideDuration');
+
+// Active ride for the logged-in driver (cold-start restore after app kill).
+router.get('/current-ride', authenticateJWT, async (req, res) => {
+  try {
+    if (req.user.userType !== 'driver') {
+      return res.status(403).json({ error: 'Only drivers can fetch current ride' });
+    }
+
+    const driverUserId = req.user._id;
+    const rideRequest = await RideRequest.findOne({
+      acceptedBy: driverUserId,
+      status: { $in: ['accepted', 'in_progress'] },
+    })
+      .sort({ createdAt: -1 })
+      .populate('rider', 'firstName lastName phone rating profileImage')
+      .lean();
+
+    if (!rideRequest) {
+      return res.json({ rideRequest: null });
+    }
+
+    const rider = rideRequest.rider || null;
+    const riderName = rider
+      ? `${rider.firstName || ''} ${rider.lastName || ''}`.trim() || 'Rider'
+      : 'Rider';
+
+    return res.json({
+      rideRequest: {
+        id: rideRequest._id,
+        _id: rideRequest._id,
+        status: rideRequest.status,
+        pickupLocation: rideRequest.pickupLocation,
+        destination: rideRequest.destination,
+        distance: rideRequest.distance,
+        estimatedDuration: rideRequest.estimatedDuration,
+        startedAt: rideRequest.startedAt || null,
+        completedAt: rideRequest.completedAt || null,
+        actualDurationSeconds: rideRequest.actualDurationSeconds,
+        elapsedSeconds: elapsedSecondsNow(rideRequest),
+        requestedPrice: rideRequest.requestedPrice,
+        suggestedPrice: rideRequest.suggestedPrice,
+        riderArrivedAt: rideRequest.riderArrivedAt,
+        routeOverviewPolyline: rideRequest.routeOverviewPolyline || '',
+        paymentMethod: rideRequest.paymentMethod || 'cash',
+        rider: rider
+          ? {
+              _id: rider._id,
+              id: rider._id,
+              firstName: rider.firstName || '',
+              lastName: rider.lastName || '',
+              phone: rider.phone || '',
+              rating: typeof rider.rating === 'number' ? rider.rating : 0,
+              profileImage: rider.profileImage || null,
+              name: riderName,
+            }
+          : null,
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching driver current ride:', error);
+    return res.status(500).json({ error: 'Failed to fetch current ride' });
+  }
+});
 
 // Register as a driver
 router.post('/register', authenticateJWT, async (req, res) => {
@@ -210,7 +275,7 @@ router.post('/location', authenticateJWT, async (req, res) => {
   }
 });
 
-// Get driver current location by driver profile id
+// Get driver current location — self or rider on an active ride with this driver only
 router.get('/current-location/:driverId', authenticateJWT, async (req, res) => {
   try {
     const { driverId } = req.params;
@@ -221,12 +286,27 @@ router.get('/current-location/:driverId', authenticateJWT, async (req, res) => {
     }
 
     // `driverId` might be either Driver profile _id or the linked User _id.
-    // Support both to keep frontend mapping simple.
-    let driver = await Driver.findById(driverId).select('currentLocation');
+    let driver = await Driver.findById(driverId).select('currentLocation user');
     if (!driver) {
-      driver = await Driver.findOne({ user: driverId }).select('currentLocation');
+      driver = await Driver.findOne({ user: driverId }).select('currentLocation user');
     }
     if (!driver) return res.status(404).json({ error: 'Driver profile not found' });
+
+    const requesterId = String(req.user._id);
+    const driverUserId = String(driver.user || '');
+    const isSelf = requesterId === driverUserId || requesterId === String(driver._id);
+
+    if (!isSelf) {
+      const RideRequest = require('../models/RideRequest');
+      const active = await RideRequest.exists({
+        rider: requesterId,
+        acceptedBy: driverUserId,
+        status: { $in: ['accepted', 'in_progress'] },
+      });
+      if (!active) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+    }
 
     return res.json({ location: driver.currentLocation });
   } catch (error) {

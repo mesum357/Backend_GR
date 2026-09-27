@@ -2,10 +2,11 @@ const express = require('express');
 const User = require('../models/User');
 const Driver = require('../models/Driver');
 const { authenticateJWT } = require('../middleware/auth');
+const { authenticateAdminJWT } = require('../middleware/admin-auth');
 const router = express.Router();
 
-// Public: list riders (for admin UI without auth)
-router.get('/public/riders', async (req, res) => {
+// Admin-only: list riders (was unauthenticated — locked for production)
+router.get('/public/riders', authenticateAdminJWT, async (req, res) => {
   try {
     const riders = await User.find({ userType: 'rider' })
       .select('firstName lastName phone email userType isVerified totalRides createdAt')
@@ -17,8 +18,8 @@ router.get('/public/riders', async (req, res) => {
   }
 });
 
-// Public: rider details (for admin UI without auth)
-router.get('/public/riders/:riderId', async (req, res) => {
+// Admin-only: rider details
+router.get('/public/riders/:riderId', authenticateAdminJWT, async (req, res) => {
   try {
     const { riderId } = req.params;
     const rider = await User.findOne({ _id: riderId, userType: 'rider' })
@@ -47,8 +48,8 @@ router.get('/public/riders/:riderId', async (req, res) => {
   }
 });
 
-// Public: list drivers (for admin UI — Driver profile + linked User)
-router.get('/public/drivers', async (req, res) => {
+// Admin-only: list drivers
+router.get('/public/drivers', authenticateAdminJWT, async (req, res) => {
   try {
     const drivers = await Driver.find({})
       .populate('user', 'firstName lastName phone email profileImage createdAt')
@@ -62,8 +63,8 @@ router.get('/public/drivers', async (req, res) => {
   }
 });
 
-// Public: single driver detail
-router.get('/public/drivers/:driverId', async (req, res) => {
+// Admin-only: single driver detail
+router.get('/public/drivers/:driverId', authenticateAdminJWT, async (req, res) => {
   try {
     const { driverId } = req.params;
     const driver = await Driver.findById(driverId)
@@ -79,8 +80,8 @@ router.get('/public/drivers/:driverId', async (req, res) => {
   }
 });
 
-// Get all users (admin only)
-router.get('/', authenticateJWT, async (req, res) => {
+// Get all users (admin JWT only)
+router.get('/', authenticateAdminJWT, async (req, res) => {
   try {
     const users = await User.find({}).select('-password');
     res.json({ users });
@@ -90,9 +91,12 @@ router.get('/', authenticateJWT, async (req, res) => {
   }
 });
 
-// Get user by ID
+// Get user by ID — self only (or admin)
 router.get('/:userId', authenticateJWT, async (req, res) => {
   try {
+    if (String(req.user._id) !== String(req.params.userId)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
     const user = await User.findById(req.params.userId).select('-password');
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
@@ -188,28 +192,35 @@ router.get('/nearby/drivers', authenticateJWT, async (req, res) => {
   }
 });
 
-// Update wallet balance
+// Update wallet balance — clients cannot self-credit (P0). Use admin wallet tools / cash-in flow.
 router.put('/wallet', authenticateJWT, async (req, res) => {
   try {
-    const { amount, operation } = req.body; // operation: 'add' or 'subtract'
+    const { amount, operation } = req.body; // operation: 'subtract' only for clients
 
     if (!amount || !operation) {
       return res.status(400).json({ error: 'Amount and operation are required' });
     }
 
-    const user = await User.findById(req.user._id);
-    let newBalance = user.wallet.balance;
-
     if (operation === 'add') {
-      newBalance += parseFloat(amount);
-    } else if (operation === 'subtract') {
-      if (newBalance < parseFloat(amount)) {
-        return res.status(400).json({ error: 'Insufficient balance' });
-      }
-      newBalance -= parseFloat(amount);
-    } else {
+      return res.status(403).json({
+        error: 'Adding wallet balance from the app is not allowed. Contact support or use cash-in.',
+      });
+    }
+
+    if (operation !== 'subtract') {
       return res.status(400).json({ error: 'Invalid operation' });
     }
+
+    const user = await User.findById(req.user._id);
+    let newBalance = user.wallet.balance;
+    const amt = parseFloat(amount);
+    if (!Number.isFinite(amt) || amt <= 0) {
+      return res.status(400).json({ error: 'Invalid amount' });
+    }
+    if (newBalance < amt) {
+      return res.status(400).json({ error: 'Insufficient balance' });
+    }
+    newBalance -= amt;
 
     user.wallet.balance = newBalance;
     await user.save();

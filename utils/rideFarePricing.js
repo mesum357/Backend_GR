@@ -10,20 +10,54 @@ const STATIC = {
   premium: { baseFare: 250, minFare: 350, defaultPerKm: 50 },
 };
 
+const KEY_ALIASES = {
+  motorcycle: 'moto',
+  bike: 'moto',
+  bicycle: 'moto',
+  moto: 'moto',
+  ridemini: 'ride_mini',
+  ride_mini: 'ride_mini',
+  car: 'ride_mini',
+  suv: 'ride_mini',
+  van: 'ride_mini',
+  ride_ac: 'ride_ac',
+  ride_with_ac: 'ride_ac',
+  premium: 'premium',
+};
+
+function isUnspecifiedRideType(vt) {
+  const s = String(vt == null ? '' : vt).trim().toLowerCase();
+  return !s || s === 'any';
+}
+
 function normalizeRideTypeKey(vt) {
-  if (vt == null || vt === '' || vt === 'any') return 'ride_mini';
+  if (isUnspecifiedRideType(vt)) return 'ride_mini';
   const s = String(vt)
     .toLowerCase()
     .trim()
     .replace(/[\s-]+/g, '_');
-  if (s === 'motorcycle' || s === 'bike' || s === 'bicycle') return 'moto';
-  if (s === 'ridemini') return 'ride_mini';
+  if (KEY_ALIASES[s]) return KEY_ALIASES[s];
   if (s.includes('premium')) return 'premium';
-  if (s.includes('ac') || s === 'ride_with_ac') return 'ride_ac';
+  if (s.includes('ac')) return 'ride_ac';
   if (s.includes('moto') && !s.includes('mini')) return 'moto';
   if (s.includes('mini')) return 'ride_mini';
   if (RIDE_TYPE_KEYS.includes(s)) return s;
   return 'ride_mini';
+}
+
+/** Persist on RideRequest: keep E2E `any` (match-all), otherwise a canonical key. */
+function canonicalRideRequestVehicleType(vt) {
+  if (isUnspecifiedRideType(vt)) return 'any';
+  return normalizeRideTypeKey(vt);
+}
+
+function driverVehicleTypeEnum(rideTypeRaw) {
+  return normalizeRideTypeKey(rideTypeRaw) === 'moto' ? 'motorcycle' : 'car';
+}
+
+function rideTypesMatch(requestVehicleType, driverRideType) {
+  if (isUnspecifiedRideType(requestVehicleType)) return true;
+  return normalizeRideTypeKey(requestVehicleType) === normalizeRideTypeKey(driverRideType || 'ride_mini');
 }
 
 function perKmFromStored(rideTypesDoc, key) {
@@ -86,6 +120,10 @@ module.exports = {
   RIDE_TYPE_KEYS,
   STATIC,
   normalizeRideTypeKey,
+  isUnspecifiedRideType,
+  canonicalRideRequestVehicleType,
+  driverVehicleTypeEnum,
+  rideTypesMatch,
   getSuggestedPrice,
   getPublicFareResponse,
   getDriverCommissionPctForRideType,

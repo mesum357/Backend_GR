@@ -4,6 +4,7 @@ const RideRequest = require('../models/RideRequest');
 const User = require('../models/User');
 const Driver = require('../models/Driver');
 const { authenticateJWT } = require('../middleware/auth');
+const { authenticateAdminJWT } = require('../middleware/admin-auth');
 const { buildDriverFareOfferEnrichment } = require('../utils/driverFareOfferEnrichment');
 const { getSystemSettings } = require('../lib/systemSettings');
 const { getServiceUnavailableZoneAt } = require('../lib/serviceZones');
@@ -11,7 +12,10 @@ const { registerRiderCancellationForPenalty } = require('../lib/registerNoArriva
 const { getDriverMinimumWalletPkr } = require('../lib/walletSettings');
 const { deductDriverCommissionForRide } = require('../lib/driverCommission');
 const { ensureRideRoutePolylineSaved } = require('../services/ensureRideRoutePolyline');
-const { normalizeRideTypeKey } = require('../utils/rideFarePricing');
+const { normalizeRideTypeKey, canonicalRideRequestVehicleType, rideTypesMatch } = require('../utils/rideFarePricing');
+const { markRideRequestExpiredIfNeeded } = require('../lib/expireStaleRideRequests');
+const { elapsedSecondsNow } = require('../lib/rideDuration');
+const { enrichAcceptedBy, serializeRideRequestCore } = require('../lib/enrichAcceptedBy');
 
 /** Same delivery semantics as server.js emitToUser (user room + legacy socket id). */
 function emitToUserFromApp(req, userId, event, payload) {
@@ -78,9 +82,7 @@ function normalizeDriverRideType(driverDoc) {
 }
 
 function requestMatchesDriverRideType(requestVehicleType, driverRideType) {
-  const requested = String(requestVehicleType || '').trim().toLowerCase();
-  if (!requested || requested === 'any') return true;
-  return normalizeRideTypeKey(requestVehicleType) === normalizeRideTypeKey(driverRideType || 'ride_mini');
+  return rideTypesMatch(requestVehicleType, driverRideType || 'ride_mini');
 }
 
 async function resolveDriverRideTypeByUserId(driverUserId) {
@@ -127,7 +129,7 @@ router.post('/create', authenticateJWT, async (req, res) => {
       destination,
       requestedPrice: requestedPrice || null,
       notes,
-      vehicleType,
+      vehicleType: canonicalRideRequestVehicleType(vehicleType),
       paymentMethod,
       isUrgent
     });
@@ -189,6 +191,7 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
       vehicleType = 'any',
       notes = ''
     } = req.body;
+    const requestedVehicleType = canonicalRideRequestVehicleType(vehicleType);
 
     const systemSettings = await getSystemSettings();
     const radiusMetersFromSettings = Number(systemSettings.maxRideRadiusKm) * 1000;
@@ -263,7 +266,7 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
       requestedPrice: offeredFare,
       suggestedPrice: offeredFare,
       notes,
-      vehicleType,
+      vehicleType: requestedVehicleType,
       paymentMethod: normalizedPaymentMethod,
       requestRadius: radiusKmFinal, // Convert meters to km
       expiresAt: new Date(Date.now() + driverTimeoutMs),
@@ -277,7 +280,7 @@ router.post('/request-ride', authenticateJWT, async (req, res) => {
       pickup.latitude,
       pickup.longitude,
       radiusKmFinal,
-      vehicleType
+      requestedVehicleType
     );
 
     // Get socket.io instance
@@ -412,20 +415,87 @@ async function findDriversWithinRadius(latitude, longitude, radiusKm, requestedV
 }
 
 // Get ride request status (rider, assigned driver, or drivers who were offered the request)
+// Rider (or assigned driver) active ride — cold-start restore without local cache.
+// MUST be registered before `/:id/status`.
+router.get('/active', authenticateJWT, async (req, res) => {
+  try {
+    const uid = req.user._id;
+    const userType = req.user.userType;
+
+    let rideRequest = null;
+    if (userType === 'driver') {
+      rideRequest = await RideRequest.findOne({
+        acceptedBy: uid,
+        status: { $in: ['accepted', 'in_progress'] },
+      })
+        .sort({ createdAt: -1 })
+        .populate('acceptedBy', 'firstName lastName phone rating profileImage')
+        .populate('rider', 'firstName lastName phone rating profileImage');
+    } else {
+      rideRequest = await RideRequest.findOne({
+        rider: uid,
+        status: { $in: ['searching', 'pending', 'accepted', 'in_progress'] },
+      })
+        .sort({ createdAt: -1 })
+        .populate('acceptedBy', 'firstName lastName phone rating profileImage')
+        .populate('rider', 'firstName lastName phone rating profileImage');
+    }
+
+    if (!rideRequest) {
+      return res.json({ rideRequest: null });
+    }
+
+    const acceptedBy = await enrichAcceptedBy(rideRequest.acceptedBy);
+    const core = serializeRideRequestCore(rideRequest, acceptedBy);
+    const riderDoc = rideRequest.rider;
+    const rider =
+      riderDoc && typeof riderDoc === 'object'
+        ? {
+            _id: riderDoc._id,
+            id: riderDoc._id,
+            firstName: riderDoc.firstName || '',
+            lastName: riderDoc.lastName || '',
+            phone: riderDoc.phone || '',
+            rating: typeof riderDoc.rating === 'number' ? riderDoc.rating : 0,
+            profileImage: riderDoc.profileImage || null,
+            name: `${riderDoc.firstName || ''} ${riderDoc.lastName || ''}`.trim() || 'Rider',
+          }
+        : null;
+
+    return res.json({
+      rideRequest: {
+        ...core,
+        elapsedSeconds: elapsedSecondsNow(rideRequest),
+        availableDrivers: rideRequest.availableDrivers,
+        rider,
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching active ride request:', error);
+    return res.status(500).json({ error: 'Failed to fetch active ride' });
+  }
+});
+
 router.get('/:id/status', authenticateJWT, async (req, res) => {
   try {
     const { id } = req.params;
     const uid = String(req.user._id);
 
-    const rideRequest = await RideRequest.findById(id);
+    const rideRequest = await RideRequest.findById(id)
+      .populate('acceptedBy', 'firstName lastName phone rating profileImage')
+      .populate('rider', 'firstName lastName phone rating profileImage');
 
     if (!rideRequest) {
       return res.status(404).json({ error: 'Ride request not found' });
     }
 
-    const isRider = rideRequest.rider.toString() === uid;
-    const isAssignedDriver =
-      rideRequest.acceptedBy && rideRequest.acceptedBy.toString() === uid;
+    const isRider = rideRequest.rider
+      ? String(rideRequest.rider._id || rideRequest.rider) === uid
+      : false;
+    const acceptedById = rideRequest.acceptedBy
+      ? String(rideRequest.acceptedBy._id || rideRequest.acceptedBy)
+      : '';
+    const isAssignedDriver = acceptedById && acceptedById === uid;
     const isAvailableDriver = (rideRequest.availableDrivers || []).some(
       (entry) => entry.driver && entry.driver.toString() === uid
     );
@@ -434,29 +504,33 @@ router.get('/:id/status', authenticateJWT, async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
+    const acceptedBy = await enrichAcceptedBy(rideRequest.acceptedBy);
+    const core = serializeRideRequestCore(rideRequest, acceptedBy);
+    const riderDoc = rideRequest.rider;
+    const rider =
+      riderDoc && typeof riderDoc === 'object' && riderDoc.firstName != null
+        ? {
+            _id: riderDoc._id,
+            id: riderDoc._id,
+            firstName: riderDoc.firstName || '',
+            lastName: riderDoc.lastName || '',
+            phone: riderDoc.phone || '',
+            rating: typeof riderDoc.rating === 'number' ? riderDoc.rating : 0,
+            profileImage: riderDoc.profileImage || null,
+            name: `${riderDoc.firstName || ''} ${riderDoc.lastName || ''}`.trim() || 'Rider',
+          }
+        : null;
+
     res.json({
       rideRequest: {
-        id: rideRequest._id,
-        status: rideRequest.status,
-        pickupLocation: rideRequest.pickupLocation,
-        destination: rideRequest.destination,
-        distance: rideRequest.distance,
-        estimatedDuration: rideRequest.estimatedDuration,
-        requestedPrice: rideRequest.requestedPrice,
-        suggestedPrice: rideRequest.suggestedPrice,
-        expiresAt: rideRequest.expiresAt,
-        createdAt: rideRequest.createdAt,
-        acceptedBy: rideRequest.acceptedBy,
-        riderArrivedAt: rideRequest.riderArrivedAt,
-        routeOverviewPolyline: rideRequest.routeOverviewPolyline || '',
+        ...core,
+        elapsedSeconds: elapsedSecondsNow(rideRequest),
         availableDrivers: rideRequest.availableDrivers,
-        emergencyStatus: rideRequest.emergencyStatus,
-        emergencyTriggeredAt: rideRequest.emergencyTriggeredAt,
-        emergencyResolvedAt: rideRequest.emergencyResolvedAt,
+        rider,
       },
       id: rideRequest._id,
       status: rideRequest.status,
-      acceptedBy: rideRequest.acceptedBy,
+      acceptedBy,
       riderArrivedAt: rideRequest.riderArrivedAt,
       requestedPrice: rideRequest.requestedPrice,
       expiresAt: rideRequest.expiresAt,
@@ -467,8 +541,8 @@ router.get('/:id/status', authenticateJWT, async (req, res) => {
   }
 });
 
-// Test endpoint to check all ride requests in database
-router.get('/test-all', async (req, res) => {
+// Admin-only diagnostic dump (was unauthenticated — P0)
+router.get('/test-all', authenticateAdminJWT, async (req, res) => {
   try {
     const allRequests = await RideRequest.find({})
       .populate('rider', 'firstName lastName rating totalRides')
@@ -899,6 +973,7 @@ router.post('/:requestId/respond', authenticateJWT, async (req, res) => {
     }
 
     if (rideRequest.expiresAt < new Date()) {
+      await markRideRequestExpiredIfNeeded(rideRequest);
       return res.status(400).json({ error: 'Ride request has expired' });
     }
 
@@ -1255,14 +1330,23 @@ router.post('/:requestId/stop-searching', authenticateJWT, async (req, res) => {
   }
 });
 
-// Debug endpoint to check ride request status
+// Ride status peek — participants only (rider or assigned driver)
 router.get('/:requestId/debug', authenticateJWT, async (req, res) => {
   try {
     const { requestId } = req.params;
-    const rideRequest = await RideRequest.findById(requestId);
+    const rideRequest = await RideRequest.findById(requestId).select(
+      'status rider acceptedBy createdAt cancelledAt'
+    );
 
     if (!rideRequest) {
       return res.status(404).json({ error: 'Ride request not found' });
+    }
+
+    const uid = String(req.user._id);
+    const isRider = String(rideRequest.rider) === uid;
+    const isAssignedDriver = rideRequest.acceptedBy && String(rideRequest.acceptedBy) === uid;
+    if (!isRider && !isAssignedDriver) {
+      return res.status(403).json({ error: 'Forbidden' });
     }
 
     res.json({
